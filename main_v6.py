@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-飞书文档分类 - 指定子目录扫描版本
+飞书文档分类 - 指定子目录扫描版本（集成 TokenManager）
 """
 
 import json
@@ -12,10 +12,11 @@ from datetime import datetime
 from typing import Optional, List, Dict
 
 # 导入原有模块
+from TokenManager import TokenManager
 from CreateFeishuNode import FeishuNodeCreator
 from Copydoc import FeishuWikiCopier
 from ReadFeishuRaw import FeishuDocumentReader
-from AddTagBlock import FeishuDocumentTagAdder
+from AddTagBlockV2 import FeishuDocumentTagAdder
 from QwenAI_new import QwenTreeClassifier
 from FindNodeByName import FeishuWikiNodeFinder
 from FeishuTitleCheck import FolderNameChecker
@@ -32,59 +33,33 @@ FEISHU_APP_SECRET = "srbaL4nDLMAoEa9jYFQMrhtipJv2ZfvD"
 SPACE_ID = "7595802147485141976"  # 新的空间ID
 
 # ========== 指定要扫描的子目录 ==========
-# 方式1：直接指定节点token（推荐，最快）
-SCAN_ROOT_TOKEN = "VtQbwy9toiH9rrkpXHycsGMLnNb"  # 8.level2 AE Team 的 token
-
-# 方式2：指定文件夹名称（程序会自动查找，但会消耗一些时间）
+SCAN_ROOT_TOKEN = "F2NEwKAuGiKA7GkCEVncVIYanwh"  # 填充需要遍历的根目录的token
 SCAN_FOLDER_NAME = None  # 如果设置了 SCAN_ROOT_TOKEN，这个设为 None
 
 # ========== 目标根节点配置（文档复制到这里）==========
-TARGET_PARENT_TOKEN = None
-TARGET_ROOT_NAME = "Kline label test"  # 文档将被复制到这个文件夹
-FALLBACK_PARENT_TOKEN = None  # 备选
+TARGET_PARENT_TOKEN = "FgkMwaZizi5xVukAz0pcVzrlnTg"
+TARGET_ROOT_NAME = "Label scanner test"
+FALLBACK_PARENT_TOKEN = None
 
 # ========== 处理配置 ==========
-USE_CACHE = False                   # 首次扫描不使用缓存
-MAX_DOCUMENTS = None                # 限制处理文档数量
-ENABLE_TAG_ADD = False              # 是否在原文档添加标签块
-SAVE_PROGRESS = True                # 是否保存处理进度
-FORCE_RESCAN = False                # 是否强制重新扫描
+USE_CACHE = False
+MAX_DOCUMENTS = None
+ENABLE_TAG_ADD = True
+SAVE_PROGRESS = True
+FORCE_RESCAN = False
 
 # AI 配置
 Qwen_AI_KEY = "sk-9neu2wGxtXiOb9EcBDlL6g"
 
 # ============================================================
-# 辅助函数
+# 辅助函数（使用 TokenManager 统一 token 管理）
 # ============================================================
 
-def get_tenant_access_token() -> Optional[str]:
-    """获取飞书 tenant_access_token"""
-    url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
-    payload = {
-        "app_id": FEISHU_APP_ID,
-        "app_secret": FEISHU_APP_SECRET
-    }
-    headers = {"Content-Type": "application/json"}
-
-    try:
-        response = requests.post(url, json=payload, headers=headers, timeout=30)
-        response.raise_for_status()
-        data = response.json()
-
-        if data.get("code") == 0:
-            return data.get("tenant_access_token")
-        else:
-            print(f"获取 tenant_access_token 失败: {data}")
-            return None
-    except Exception as e:
-        print(f"获取 tenant_access_token 异常: {e}")
-        return None
-
-def find_node_by_name_direct(space_id: str, node_name: str) -> Optional[str]:
-    """直接通过API查找节点（不扫描整个知识库）"""
+def find_node_by_name_direct(token_manager: TokenManager, space_id: str, node_name: str) -> Optional[str]:
+    """直接通过API查找节点（使用 TokenManager）"""
     print(f"\n🔍 正在查找节点: {node_name}")
     
-    token = get_tenant_access_token()
+    token = token_manager.get_token()
     if not token:
         return None
     
@@ -127,14 +102,14 @@ def find_node_by_name_direct(space_id: str, node_name: str) -> Optional[str]:
     print(f"⚠️ 未找到节点 '{node_name}'")
     return None
 
-def get_scan_root_token() -> Optional[str]:
+def get_scan_root_token(token_manager: TokenManager) -> Optional[str]:
     """获取要扫描的根目录token"""
     if SCAN_ROOT_TOKEN:
         print(f"📁 使用指定的扫描根节点token: {SCAN_ROOT_TOKEN}")
         return SCAN_ROOT_TOKEN
     
     if SCAN_FOLDER_NAME:
-        token = find_node_by_name_direct(SPACE_ID, SCAN_FOLDER_NAME)
+        token = find_node_by_name_direct(token_manager, SPACE_ID, SCAN_FOLDER_NAME)
         if token:
             print(f"📁 将只扫描文件夹: {SCAN_FOLDER_NAME}")
             return token
@@ -142,14 +117,14 @@ def get_scan_root_token() -> Optional[str]:
     print(f"📁 未指定扫描范围，将扫描整个知识库")
     return None
 
-def get_target_root_token() -> Optional[str]:
+def get_target_root_token(token_manager: TokenManager) -> Optional[str]:
     """获取目标根节点token（文档复制到这里）"""
     if TARGET_PARENT_TOKEN:
         print(f"📁 使用指定的目标根节点token: {TARGET_PARENT_TOKEN}")
         return TARGET_PARENT_TOKEN
     
     if TARGET_ROOT_NAME:
-        token = find_node_by_name_direct(SPACE_ID, TARGET_ROOT_NAME)
+        token = find_node_by_name_direct(token_manager, SPACE_ID, TARGET_ROOT_NAME)
         if token:
             print(f"📁 文档将复制到: {TARGET_ROOT_NAME}")
             return token
@@ -158,7 +133,7 @@ def get_target_root_token() -> Optional[str]:
         print(f"📁 使用备选根节点: {FALLBACK_PARENT_TOKEN}")
         # 如果备选是字符串，尝试查找
         if isinstance(FALLBACK_PARENT_TOKEN, str) and not FALLBACK_PARENT_TOKEN.startswith("VtQb"):
-            token = find_node_by_name_direct(SPACE_ID, FALLBACK_PARENT_TOKEN)
+            token = find_node_by_name_direct(token_manager, SPACE_ID, FALLBACK_PARENT_TOKEN)
             if token:
                 return token
         return FALLBACK_PARENT_TOKEN
@@ -202,7 +177,8 @@ def load_processing_progress(filename: str = "processing_progress.json") -> set:
 # ============================================================
 
 def process_single_document(
-    doc_token: str,
+    node_token: str,
+    obj_token: str,
     doc_title: str,
     reader: FeishuDocumentReader,
     classifier: QwenTreeClassifier,
@@ -210,6 +186,7 @@ def process_single_document(
     name_checker: FolderNameChecker,
     node_finder: FeishuWikiNodeFinder,
     tag_adder: FeishuDocumentTagAdder,
+    token_manager: TokenManager,
     processed_tokens: set,
     target_root_token: str
 ) -> bool:
@@ -217,12 +194,12 @@ def process_single_document(
     
     print(f"\n{'='*60}")
     print(f"📄 处理文档: {doc_title}")
-    print(f"🔑 Token: {doc_token}")
+    print(f"🔑 node_token: {node_token} | obj_token: {obj_token}")
     print(f"{'='*60}")
     
     try:
         print("📖 正在读取文档内容...")
-        content = reader.get_raw_content(doc_token)
+        content = reader.get_raw_content(obj_token)
         if not content:
             print("⚠️ 文档内容为空，跳过")
             return False
@@ -237,18 +214,21 @@ def process_single_document(
         
         if tag_count == 1:
             success = process_single_level_tag(
-                doc_token, doc_title, tag, creator,
-                name_checker, node_finder, SPACE_ID, target_root_token
+                node_token, doc_title, tag, creator,
+                name_checker, node_finder, SPACE_ID, target_root_token,
+                token_manager
             )
         elif tag_count == 2:
             success = process_two_level_tag(
-                doc_token, doc_title, tag, creator,
-                name_checker, node_finder, SPACE_ID, target_root_token
+                node_token, doc_title, tag, creator,
+                name_checker, node_finder, SPACE_ID, target_root_token,
+                token_manager
             )
         elif tag_count >= 3:
             success = process_three_level_tag(
-                doc_token, doc_title, tag, creator,
-                name_checker, node_finder, SPACE_ID, target_root_token
+                node_token, doc_title, tag, creator,
+                name_checker, node_finder, SPACE_ID, target_root_token,
+                token_manager
             )
         else:
             print(f"❌ 未知的标签格式: {tag}")
@@ -256,8 +236,10 @@ def process_single_document(
         
         if ENABLE_TAG_ADD and success:
             tag_message = format_tag_message(tag)
-            tag_adder.add_tag_block(doc_token, tag_message)
-            print("🏷️ 已添加标签块到原文档")
+            if tag_adder.add_tag_block(obj_token, tag_message):
+                print("🏷️ 已添加标签块到原文档")
+            else:
+                print("⚠️ 标签块添加失败（复制已成功）")
         
         return success
         
@@ -276,8 +258,9 @@ def format_tag_message(tag: Dict) -> str:
             parts.append(f"Tag{i}: {tag[tag_key][0]}")
     return "\n | " + " | ".join(parts)
 
-def process_single_level_tag(doc_token, doc_title, tag, creator, 
-                            name_checker, node_finder, space_id, parent_token):
+def process_single_level_tag(doc_token, doc_title, tag, creator,
+                            name_checker, node_finder, space_id, parent_token,
+                            token_manager):
     """处理单级标签"""
     level1tag = tag["tag1"][0]
     
@@ -300,10 +283,11 @@ def process_single_level_tag(doc_token, doc_title, tag, creator,
             return False
         print(f"✅ 创建新节点: {new_title}")
     
-    return copy_document(doc_token, doc_title, target_token)
+    return copy_document(doc_token, doc_title, target_token, token_manager)
 
 def process_two_level_tag(doc_token, doc_title, tag, creator,
-                         name_checker, node_finder, space_id, parent_token):
+                         name_checker, node_finder, space_id, parent_token,
+                         token_manager):
     """处理二级标签"""
     level1tag = tag["tag1"][0]
     level2tag = tag["tag2"][0]
@@ -347,10 +331,11 @@ def process_two_level_tag(doc_token, doc_title, tag, creator,
             return False
         print(f"✅ 创建新节点: {level1tag} -> {new_title}")
     
-    return copy_document(doc_token, doc_title, target_token)
+    return copy_document(doc_token, doc_title, target_token, token_manager)
 
 def process_three_level_tag(doc_token, doc_title, tag, creator,
-                           name_checker, node_finder, space_id, parent_token):
+                           name_checker, node_finder, space_id, parent_token,
+                           token_manager):
     """处理三级标签"""
     level1tag = tag["tag1"][0]
     level2tag = tag["tag2"][0]
@@ -404,14 +389,13 @@ def process_three_level_tag(doc_token, doc_title, tag, creator,
         if not target_token:
             return False
     
-    return copy_document(doc_token, doc_title, target_token)
+    return copy_document(doc_token, doc_title, target_token, token_manager)
 
-def copy_document(doc_token: str, doc_title: str, target_folder_token: str) -> bool:
-    """复制文档到目标文件夹"""
+def copy_document(doc_token: str, doc_title: str, target_folder_token: str, token_manager: TokenManager) -> bool:
+    """复制文档到目标文件夹（使用 TokenManager）"""
     try:
         copier = FeishuWikiCopier(
-            app_id=FEISHU_APP_ID,
-            app_secret=FEISHU_APP_SECRET,
+            token_manager=token_manager,
             node_token=doc_token,
             target_folder_token=target_folder_token,
             new_file_name=doc_title,
@@ -448,30 +432,34 @@ def main():
     print(f"   - 使用缓存: {USE_CACHE}")
     print(f"   - 最大文档数: {MAX_DOCUMENTS if MAX_DOCUMENTS else '无限制'}")
     
-    # 1. 获取飞书token
-    print("\n🔑 步骤1: 获取飞书访问令牌...")
-    token = get_tenant_access_token()
-    if not token:
-        print("❌ 无法获取飞书token, 程序退出")
+    # 1. 创建 TokenManager
+    token_manager = TokenManager(FEISHU_APP_ID, FEISHU_APP_SECRET)
+    try:
+        # 验证 token 是否可获取
+        test_token = token_manager.get_token()
+        if not test_token:
+            print("❌ 无法获取有效的 tenant_access_token, 程序退出")
+            return
+        print("✅ TokenManager 创建成功，token 获取正常")
+    except Exception as e:
+        print(f"❌ TokenManager 初始化失败: {e}")
         return
-    
-    print("✅ 飞书token获取成功")
     
     # 2. 初始化组件
     print("\n🔧 步骤2: 初始化组件...")
-    reader = FeishuDocumentReader(token)
+    reader = FeishuDocumentReader(token_manager)
     classifier = QwenTreeClassifier(Qwen_AI_KEY)
-    creator = FeishuNodeCreator(token, SPACE_ID)
-    name_checker = FolderNameChecker(FEISHU_APP_ID, FEISHU_APP_SECRET)
-    node_finder = FeishuWikiNodeFinder(FEISHU_APP_ID, FEISHU_APP_SECRET)
-    tag_adder = FeishuDocumentTagAdder(token)
+    creator = FeishuNodeCreator(token_manager, SPACE_ID)
+    name_checker = FolderNameChecker(token_manager)
+    node_finder = FeishuWikiNodeFinder(token_manager)
+    tag_adder = FeishuDocumentTagAdder(token_manager)
     print("✅ 组件初始化完成")
     
-    # 3. 确定扫描范围和目标目录
+    # 3. 确定扫描范围和目标目录（传入 token_manager）
     print("\n📂 步骤3: 确定扫描范围...")
     
-    scan_root_token = get_scan_root_token()
-    target_root_token = get_target_root_token()
+    scan_root_token = get_scan_root_token(token_manager)
+    target_root_token = get_target_root_token(token_manager)
     
     if not scan_root_token:
         print("❌ 未找到扫描目录，程序退出")
@@ -485,7 +473,7 @@ def main():
     
     # 4. 扫描文档
     print("\n📂 步骤4: 扫描文档...")
-    scanner = SimpleWikiScanner(FEISHU_APP_ID, FEISHU_APP_SECRET)
+    scanner = SimpleWikiScanner(token_manager, enable_db_cache=USE_CACHE)
     
     all_documents = scanner.scan_space(
         space_id=SPACE_ID,
@@ -517,23 +505,24 @@ def main():
     skip_count = 0
     
     for idx, doc in enumerate(all_documents, 1):
-        doc_token = doc["node_token"]
+        node_token = doc["node_token"]
+        obj_token = doc.get("obj_token") or node_token
         doc_title = doc["title"]
         
-        if doc_token in processed_tokens:
+        if node_token in processed_tokens:
             print(f"\n[{idx}/{len(all_documents)}] ⏭️ 跳过已处理文档: {doc_title}")
             skip_count += 1
             continue
         
         success = process_single_document(
-            doc_token, doc_title, reader, classifier, creator,
-            name_checker, node_finder, tag_adder, processed_tokens,
+            node_token, obj_token, doc_title, reader, classifier, creator,
+            name_checker, node_finder, tag_adder, token_manager, processed_tokens,
             target_root_token
         )
         
         if success:
             success_count += 1
-            processed_tokens.add(doc_token)
+            processed_tokens.add(node_token)
         else:
             fail_count += 1
         

@@ -1,46 +1,15 @@
 import requests
 from collections import Counter
 from typing import Dict, List, Optional
-
-
+from TokenManager import TokenManager
 class FolderNameChecker:
     """飞书知识库节点重复检查器（基于 requests）"""
 
-    def __init__(self, app_id: str, app_secret: str):
-        """
-        初始化检查器
-
-        :param app_id:     飞书应用 App ID
-        :param app_secret: 飞书应用 App Secret
-        """
-        self.app_id = app_id
-        self.app_secret = app_secret
-        self._access_token = None
+    def __init__(self, token_manager: TokenManager):
+        self.token_manager = token_manager
 
     def _get_tenant_access_token(self) -> str:
-        """获取飞书 tenant_access_token（自建应用）并缓存"""
-        if self._access_token:
-            return self._access_token
-
-        url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
-        payload = {"app_id": self.app_id, "app_secret": self.app_secret}
-        headers = {"Content-Type": "application/json"}
-
-        try:
-            response = requests.post(url, json=payload, headers=headers, timeout=10)
-            response.raise_for_status()
-            result = response.json()
-        except Exception as e:
-            raise Exception(f"请求 token 失败: {e}")
-
-        if result.get("code") != 0:
-            raise Exception(f"获取 token 失败: code={result.get('code')}, msg={result.get('msg')}")
-
-        token = result.get("tenant_access_token")
-        if not token:
-            raise Exception("返回结果中未包含 tenant_access_token")
-        self._access_token = token
-        return token
+        return self.token_manager.get_token()
 
     def check_duplicate(
         self,

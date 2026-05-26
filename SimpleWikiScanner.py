@@ -6,28 +6,43 @@ from typing import List, Dict, Optional, Set
 from datetime import datetime
 from collections import deque
 import logging
+import os
+
+from TokenManager import TokenManager  # 导入 TokenManager
+
+_DEFAULT_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wiki_scan_cache.db")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class SimpleWikiScanner:
-    """简单但高性能的飞书知识库扫描器（同步版本）"""
+    """简单但高性能的飞书知识库扫描器（同步版本，使用 TokenManager）"""
     
-    def __init__(self, app_id: str, app_secret: str, db_path: str = "wiki_scan_cache.db"):
-        self.app_id = app_id
-        self.app_secret = app_secret
-        self.db_path = db_path
-        self._access_token = None
-        self.token_expire_time = 0
-        
-        # 统计信息
+    def __init__(
+        self,
+        token_manager: TokenManager,
+        db_path: Optional[str] = None,
+        enable_db_cache: bool = False,
+    ):
+        """
+        初始化扫描器
+        :param token_manager: TokenManager 实例，用于获取有效的 tenant_access_token
+        :param db_path: 数据库文件路径，默认自动生成
+        :param enable_db_cache: 是否启用数据库缓存（节点缓存和进度保存）
+        """
+        self.token_manager = token_manager
+        self.enable_db_cache = enable_db_cache
+        self.db_path = db_path or _DEFAULT_DB
+        self._use_cache = False   # 运行时控制是否读写缓存
+
         self.stats = {
             "api_calls": 0,
             "nodes_scanned": 0,
-            "documents_found": 0
+            "documents_found": 0,
         }
-        
-        self._init_database()
+
+        if self.enable_db_cache:
+            self._init_database()
     
     def _init_database(self):
         """初始化数据库"""
@@ -62,37 +77,19 @@ class SimpleWikiScanner:
         logger.info("数据库初始化完成")
     
     def _get_tenant_access_token(self) -> str:
-        """获取token"""
-        if self._access_token and time.time() < self.token_expire_time:
-            return self._access_token
-        
-        url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
-        payload = {"app_id": self.app_id, "app_secret": self.app_secret}
-        
-        try:
-            response = requests.post(url, json=payload, timeout=30)
-            result = response.json()
-            
-            if result.get("code") != 0:
-                raise Exception(f"获取token失败: {result.get('msg')}")
-            
-            self._access_token = result.get("tenant_access_token")
-            self.token_expire_time = time.time() + 7000
-            logger.info("获取token成功")
-            return self._access_token
-        except Exception as e:
-            logger.error(f"获取token异常: {e}")
-            raise
+        """通过 TokenManager 获取有效的 tenant_access_token"""
+        return self.token_manager.get_token()
     
     def scan_space(self, space_id: str, root_token: Optional[str] = None, use_cache: bool = True) -> List[Dict]:
         """
         扫描知识空间
-        
+
         :param space_id: 空间ID
         :param root_token: 起始节点token（如果指定，只扫描该节点下的内容）
-        :param use_cache: 是否使用缓存
+        :param use_cache: 是否使用缓存（False 时不读写 SQLite）
         :return: 文档列表
         """
+        self._use_cache = use_cache and self.enable_db_cache
         logger.info(f"开始扫描知识空间 {space_id}")
         
         # 验证空间访问
@@ -114,7 +111,7 @@ class SimpleWikiScanner:
         scanned_nodes = set()
         pending_nodes = deque()
         
-        if use_cache:
+        if use_cache and self.enable_db_cache:
             cached_docs, scanned_nodes, pending_nodes = self._load_progress(space_id, "ROOT")
             all_documents.extend(cached_docs)
             logger.info(f"从缓存恢复: 已扫描 {len(scanned_nodes)} 个节点，已找到 {len(all_documents)} 个文档")
@@ -182,7 +179,7 @@ class SimpleWikiScanner:
         
         # 检查缓存
         cache_key = f"NODE_{node_token}"
-        if use_cache:
+        if use_cache and self.enable_db_cache:
             cached_docs, scanned_nodes, pending_nodes = self._load_progress(space_id, cache_key)
             all_documents.extend(cached_docs)
             logger.info(f"从缓存恢复: 已扫描 {len(scanned_nodes)} 个节点，已找到 {len(all_documents)} 个文档")
@@ -322,9 +319,11 @@ class SimpleWikiScanner:
     
     def _cache_node(self, node: Dict):
         """缓存节点"""
+        if not self._use_cache:
+            return
         if not node.get("node_token"):
             return
-            
+
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -347,6 +346,9 @@ class SimpleWikiScanner:
     
     def _save_progress(self, space_id: str, scan_root: str, scanned_nodes: Set, pending_nodes: deque, documents: List):
         """保存进度"""
+        if not self._use_cache:
+            return
+
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         

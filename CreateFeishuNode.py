@@ -2,17 +2,23 @@
 # 2026-05-13
 # Linkin WANG
 import requests
+from TokenManager import TokenManager
 class FeishuNodeCreator:
-    def __init__(self, access_token: str, space_id: str):
+    def __init__(self, token_manager: TokenManager, space_id: str):
+        self.token_manager = token_manager
+        self.space_id = space_id
         """
         初始化
-            access_token: 飞书应用的 access_token
+            token_manager: TokenManager 实例
             space_id: 知识库的 space_id
         """
-        self.access_token = access_token
-        self.space_id = space_id
+    def _get_headers(self):
+        return {
+            "Authorization": f"Bearer {self.token_manager.get_token()}",
+            "Content-Type": "application/json"
+        }
     
-    def create_lark_node(self, node_token, title):
+    def create_lark_node(self, node_token: str, title: str):
         """
         在指定父节点下创建一个新的文档节点（docx类型）
         Args:
@@ -23,10 +29,7 @@ class FeishuNodeCreator:
             失败时返回 response_data
         """
         url = f"https://open.feishu.cn/open-apis/wiki/v2/spaces/{self.space_id}/nodes"
-        headers = {
-            "Authorization": f"Bearer {self.access_token}",
-            "Content-Type": "application/json"
-        }
+        headers = self._get_headers()
         
         payload = {
             "obj_type": "docx",                 # 文档类型：docx表示新版文档
