@@ -7,8 +7,25 @@
 
 import os
 import json
-from typing import Dict, List, Union, Optional, Tuple
-from openai import OpenAI
+import random
+import time
+from typing import Dict, List, Union, Optional, Tuple, TYPE_CHECKING
+
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    InternalServerError,
+    OpenAI,
+    RateLimitError,
+)
+
+from llm_rate_limit import LLM_CONCURRENCY, LLM_RATE_LIMITER
+
+if TYPE_CHECKING:
+    from classify_cache import ClassifyCache
+
+RETRYABLE_HTTP_STATUS = frozenset({429, 500, 502, 503, 504})
 
 
 class QwenTreeClassifier:
@@ -216,13 +233,31 @@ class QwenTreeClassifier:
         "Others": {}
     }
 
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        max_content_chars: int = 3000,
+        verbose: bool = True,
+        cache: Optional["ClassifyCache"] = None,
+        max_retries: int = 6,
+        request_timeout: float = 120.0,
+    ):
         self.api_key = api_key or self.QWEN_API_KEY
         if self.api_key == "your_qwen_api_key_here":
             raise ValueError("请设置有效的 Qwen API Key")
         self.model = self.QWEN_MODEL
         self.base_url = self.QWEN_BASE_URL
-        self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+        # 关闭 SDK 内置短间隔重试，避免 4 路并发时同时打出大量 502 重试
+        self.client = OpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+            max_retries=0,
+            timeout=request_timeout,
+        )
+        self.max_content_chars = max_content_chars
+        self.verbose = verbose
+        self.cache = cache
+        self.max_retries = max_retries
 
         # 预计算所有合法路径（用于后校验）
         self.valid_paths = self._extract_all_paths(self.LABEL_TREE)
@@ -392,39 +427,103 @@ Others
         print(f"警告: 路径 '{path_str}' 不在预定义标签树中，回退为 Others")
         return "Others"
 
-    def classify(self, content: str) -> Dict[str, List[str]]:
+    def _prepare_text(self, content: str, title: Optional[str] = None) -> str:
+        body = (content or "")[: self.max_content_chars]
+        if title:
+            return f"标题: {title}\n\n{body}"
+        return body
+
+    @staticmethod
+    def _is_retryable_error(exc: BaseException) -> bool:
+        if isinstance(
+            exc,
+            (APIConnectionError, APITimeoutError, InternalServerError, RateLimitError),
+        ):
+            return True
+        if isinstance(exc, APIStatusError) and exc.status_code in RETRYABLE_HTTP_STATUS:
+            return True
+        return False
+
+    @staticmethod
+    def _error_summary(exc: BaseException) -> str:
+        if isinstance(exc, APIStatusError):
+            return f"HTTP {exc.status_code}"
+        return type(exc).__name__
+
+    def _chat_completion_with_retry(self, messages: List[Dict[str, str]]):
+        """带全局限速、并发上限与指数退避的 LLM 调用。"""
+        last_error: Optional[BaseException] = None
+        with LLM_CONCURRENCY:
+            for attempt in range(self.max_retries):
+                LLM_RATE_LIMITER.wait()
+                try:
+                    return self.client.chat.completions.create(
+                        model=self.model,
+                        messages=messages,
+                        temperature=0.1,
+                        max_tokens=256,
+                        top_p=0.9,
+                    )
+                except Exception as e:
+                    last_error = e
+                    if not self._is_retryable_error(e) or attempt >= self.max_retries - 1:
+                        raise
+                    wait = min(2**attempt + random.uniform(0.2, 1.0), 45.0)
+                    print(
+                        f"⏳ LLM 暂时不可用 ({self._error_summary(e)})，"
+                        f"{wait:.1f}s 后重试 ({attempt + 1}/{self.max_retries})"
+                    )
+                    time.sleep(wait)
+        if last_error:
+            raise last_error
+        raise RuntimeError("LLM request failed without exception")
+
+    def classify(
+        self,
+        content: str,
+        obj_token: Optional[str] = None,
+        title: Optional[str] = None,
+    ) -> Dict[str, List[str]]:
         """主分类方法，返回 JSON 格式的标签路径"""
-        truncated = content[:10000] if content else ""
-        if not truncated:
+        if not (content or "").strip() and not title:
             return {"tag1": ["Others"]}
-            
+
+        if self.cache and obj_token:
+            cached = self.cache.get(obj_token, content or "")
+            if cached is not None:
+                if self.verbose:
+                    print(f"📦 使用分类缓存: {obj_token}")
+                return cached
+
+        truncated = self._prepare_text(content, title)
         prompt = self._build_prompt(truncated)
 
+        messages = [
+            {
+                "role": "system",
+                "content": "你是一个专业的技术文档分类专家。严格按照分类规则输出，不添加任何额外内容。",
+            },
+            {"role": "user", "content": prompt},
+        ]
+
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "你是一个专业的技术文档分类专家。严格按照分类规则输出，不添加任何额外内容。"},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.1,
-                max_tokens=256,
-                top_p=0.9
-            )
-
+            response = self._chat_completion_with_retry(messages)
             raw_result = response.choices[0].message.content
-            print(f"AI 返回原始结果: {raw_result}")
+            if self.verbose:
+                print(f"AI 返回原始结果: {raw_result}")
 
-            path_str = self._clean_response(raw_result)
-            
-            # 验证路径合法性
+            path_str = self._clean_response(raw_result or "")
             path_str = self._validate_path(path_str)
+            result = self._path_to_json(path_str)
 
-            return self._path_to_json(path_str)
+            if self.cache and obj_token:
+                self.cache.set(obj_token, content or "", result)
+            return result
 
         except Exception as e:
-            print(f"调用 Qwen API 失败: {e}")
-            return {"tag1": ["Others"]}
+            title_hint = f" ({title})" if title else ""
+            print(f"调用 Qwen API 失败{title_hint}: {e}")
+            return None
     
     def get_all_labels(self) -> List[str]:
         """获取所有根标签"""

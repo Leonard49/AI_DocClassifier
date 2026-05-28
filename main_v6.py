@@ -5,11 +5,20 @@
 """
 
 import json
-import time
 import sys
+import threading
 import requests
+
+# Windows 终端/PowerShell 默认 GBK，管道重定向时 emoji 会 UnicodeEncodeError
+if sys.platform == "win32":
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple
 
 # 导入原有模块
 from TokenManager import TokenManager
@@ -18,9 +27,10 @@ from Copydoc import FeishuWikiCopier
 from ReadFeishuRaw import FeishuDocumentReader
 from AddTagBlockV2 import FeishuDocumentTagAdder
 from QwenAI_new import QwenTreeClassifier
-from FindNodeByName import FeishuWikiNodeFinder
 from FeishuTitleCheck import FolderNameChecker
 from SimpleWikiScanner import SimpleWikiScanner
+from classify_cache import ClassifyCache
+from run_logging import setup_run_log
 
 # ============================================================
 # 配置部分
@@ -33,12 +43,12 @@ FEISHU_APP_SECRET = "srbaL4nDLMAoEa9jYFQMrhtipJv2ZfvD"
 SPACE_ID = "7595802147485141976"  # 新的空间ID
 
 # ========== 指定要扫描的子目录 ==========
-SCAN_ROOT_TOKEN = "F2NEwKAuGiKA7GkCEVncVIYanwh"  # 填充需要遍历的根目录的token
+SCAN_ROOT_TOKEN = "JUWxwwvfJiLWQvk9HLHc3b24nie"  # 填充需要遍历的根目录的token
 SCAN_FOLDER_NAME = None  # 如果设置了 SCAN_ROOT_TOKEN，这个设为 None
 
 # ========== 目标根节点配置（文档复制到这里）==========
-TARGET_PARENT_TOKEN = "FgkMwaZizi5xVukAz0pcVzrlnTg"
-TARGET_ROOT_NAME = "Label scanner test"
+TARGET_PARENT_TOKEN = "GPFewOUJ1iGBrGks7R7cB137nDh"
+TARGET_ROOT_NAME = "HyTest"
 FALLBACK_PARENT_TOKEN = None
 
 # ========== 处理配置 ==========
@@ -47,6 +57,18 @@ MAX_DOCUMENTS = None
 ENABLE_TAG_ADD = True
 SAVE_PROGRESS = True
 FORCE_RESCAN = False
+SAVE_RUN_LOG = True       # 自动保存终端输出到 logs/run_YYYYMMDD_HHMMSS.log
+LOG_DIR = "logs"
+
+# ========== 性能优化配置 ==========
+READ_WORKERS = 3          # 并行读取（全局限速 4 次/秒，勿超过飞书 docx 5 次/秒上限）
+CLASSIFY_WORKERS = 4      # 并行 AI 分类（与 llm_rate_limit 并发上限配合，过大易 502）
+CLASSIFY_MAX_CHARS = 3000 # 送入模型的正文字符上限（含标题前缀）
+USE_CLASSIFY_CACHE = True # SQLite 分类结果缓存
+CLASSIFY_VERBOSE = False  # 批量时关闭逐条 AI 日志
+LLM_MAX_RETRIES = 6       # 502/503 等可重试错误的最大次数
+LLM_REQUEST_TIMEOUT = 120.0
+PROGRESS_INTERVAL = 10    # 每处理 N 个文档打印一次进度
 
 # AI 配置
 Qwen_AI_KEY = "sk-9neu2wGxtXiOb9EcBDlL6g"
@@ -54,6 +76,37 @@ Qwen_AI_KEY = "sk-9neu2wGxtXiOb9EcBDlL6g"
 # ============================================================
 # 辅助函数（使用 TokenManager 统一 token 管理）
 # ============================================================
+
+def _format_eta(elapsed: float, done: int, total: int) -> str:
+    if done <= 0 or done >= total:
+        return "—"
+    remaining = elapsed / done * (total - done)
+    if remaining >= 3600:
+        return f"{remaining / 3600:.1f} 小时"
+    return f"{remaining / 60:.1f} 分钟"
+
+
+def _print_batch_progress(
+    label: str,
+    done: int,
+    total: int,
+    ok: int,
+    fail: int,
+    start_time: datetime,
+    extra: str = "",
+) -> None:
+    elapsed = (datetime.now() - start_time).total_seconds()
+    pct = (done / total * 100) if total else 0
+    eta = _format_eta(elapsed, done, total)
+    suffix = f" | {extra}" if extra else ""
+    print(
+        f"\r{label}: {done}/{total} ({pct:.1f}%) | "
+        f"成功: {ok} | 失败: {fail} | "
+        f"已用: {elapsed / 60:.1f} 分钟 | 预计剩余: {eta}{suffix}",
+        end="",
+        flush=True,
+    )
+
 
 def find_node_by_name_direct(token_manager: TokenManager, space_id: str, node_name: str) -> Optional[str]:
     """直接通过API查找节点（使用 TokenManager）"""
@@ -176,58 +229,172 @@ def load_processing_progress(filename: str = "processing_progress.json") -> set:
 # 文档处理函数
 # ============================================================
 
+def batch_read_contents(
+    docs: List[Dict],
+    reader: FeishuDocumentReader,
+    workers: int,
+    progress_interval: int = PROGRESS_INTERVAL,
+) -> Dict[str, Tuple[str, Optional[str]]]:
+    """并行读取文档，返回 obj_token -> (title, content)"""
+    results: Dict[str, Tuple[str, Optional[str]]] = {}
+    total = len(docs)
+    done = 0
+    ok = 0
+    lock = threading.Lock()
+    start_time = datetime.now()
+
+    def _read_one(doc: Dict) -> Tuple[str, str, Optional[str]]:
+        obj_token = doc.get("obj_token") or doc["node_token"]
+        node_token = doc["node_token"]
+        title = doc["title"]
+        content = reader.get_raw_content(obj_token, wiki_node_token=node_token)
+        return obj_token, title, content
+
+    def _on_done(obj_token: str, title: str, content: Optional[str]) -> None:
+        nonlocal done, ok
+        results[obj_token] = (title, content)
+        with lock:
+            done += 1
+            if content:
+                ok += 1
+            if done == 1 or done == total or done % progress_interval == 0:
+                _print_batch_progress(
+                    "📖 读取进度", done, total, ok, done - ok, start_time
+                )
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(_read_one, doc): doc for doc in docs}
+        for future in as_completed(futures):
+            obj_token, title, content = future.result()
+            _on_done(obj_token, title, content)
+
+    print()
+    elapsed = (datetime.now() - start_time).total_seconds()
+    print(
+        f"📖 读取汇总: {ok}/{total} 有内容 | "
+        f"{total - ok} 为空 | 耗时 {elapsed / 60:.1f} 分钟"
+    )
+    return results
+
+
+def batch_classify_documents(
+    read_results: Dict[str, Tuple[str, Optional[str]]],
+    classifier: QwenTreeClassifier,
+    workers: int,
+    progress_interval: int = PROGRESS_INTERVAL,
+) -> Dict[str, Optional[Dict]]:
+    """并行 AI 分类，返回 obj_token -> tag（失败或空内容为 None）"""
+    tags: Dict[str, Optional[Dict]] = {}
+    to_classify: List[Tuple[str, Tuple[str, Optional[str]]]] = []
+    empty_skip = 0
+
+    for obj_token, item in read_results.items():
+        title, content = item
+        if not content:
+            tags[obj_token] = None
+            empty_skip += 1
+        else:
+            to_classify.append((obj_token, item))
+
+    total = len(to_classify)
+    done = 0
+    ok = 0
+    cached = 0
+    lock = threading.Lock()
+    start_time = datetime.now()
+
+    print(
+        f"   待 AI 分类: {total} | 内容为空已跳过: {empty_skip} | "
+        f"合计: {len(read_results)}"
+    )
+
+    def _classify_one(item: Tuple[str, Tuple[str, Optional[str]]]) -> Tuple[str, Optional[Dict], bool]:
+        obj_token, (title, content) = item
+        from_cache = False
+        if classifier.cache and obj_token:
+            cached_tag = classifier.cache.get(obj_token, content or "")
+            if cached_tag is not None:
+                return obj_token, cached_tag, True
+        tag = classifier.classify(content, obj_token=obj_token, title=title)
+        return obj_token, tag, from_cache
+
+    def _on_done(obj_token: str, tag: Optional[Dict], from_cache: bool) -> None:
+        nonlocal done, ok, cached
+        tags[obj_token] = tag
+        with lock:
+            done += 1
+            if tag:
+                ok += 1
+            if from_cache:
+                cached += 1
+            if done == 1 or done == total or done % progress_interval == 0:
+                _print_batch_progress(
+                    "🤖 AI 分类进度",
+                    done,
+                    total,
+                    ok,
+                    done - ok,
+                    start_time,
+                    extra=f"缓存命中: {cached}",
+                )
+
+    if not to_classify:
+        print("🤖 无需 AI 分类（均无正文）")
+        return tags
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [executor.submit(_classify_one, item) for item in to_classify]
+        for future in as_completed(futures):
+            obj_token, tag, from_cache = future.result()
+            _on_done(obj_token, tag, from_cache)
+
+    print()
+    elapsed = (datetime.now() - start_time).total_seconds()
+    print(
+        f"🤖 分类汇总: 成功 {ok}/{total} | 失败 {total - ok} | "
+        f"缓存命中 {cached} | 空文档跳过 {empty_skip} | 耗时 {elapsed / 60:.1f} 分钟"
+    )
+    return tags
+
+
 def process_single_document(
     node_token: str,
     obj_token: str,
     doc_title: str,
-    reader: FeishuDocumentReader,
-    classifier: QwenTreeClassifier,
     creator: FeishuNodeCreator,
     name_checker: FolderNameChecker,
-    node_finder: FeishuWikiNodeFinder,
     tag_adder: FeishuDocumentTagAdder,
     token_manager: TokenManager,
-    processed_tokens: set,
-    target_root_token: str
+    target_root_token: Optional[str],
+    tag: Dict,
 ) -> bool:
-    """处理单个文档"""
-    
+    """根据已有分类结果执行复制与打标（串行，保证飞书写操作顺序）"""
+
     print(f"\n{'='*60}")
     print(f"📄 处理文档: {doc_title}")
     print(f"🔑 node_token: {node_token} | obj_token: {obj_token}")
+    print(f"🏷️ 分类结果: {json.dumps(tag, ensure_ascii=False)}")
     print(f"{'='*60}")
-    
+
     try:
-        print("📖 正在读取文档内容...")
-        content = reader.get_raw_content(obj_token)
-        if not content:
-            print("⚠️ 文档内容为空，跳过")
-            return False
-        
-        print(f"✅ 文档内容读取成功，长度: {len(content)} 字符")
-        
-        print("🤖 正在进行AI分类...")
-        tag = classifier.classify(content)
-        print(f"🏷️ 分类结果: {json.dumps(tag, ensure_ascii=False)}")
-        
         tag_count = len(tag)
         
         if tag_count == 1:
             success = process_single_level_tag(
                 node_token, doc_title, tag, creator,
-                name_checker, node_finder, SPACE_ID, target_root_token,
+                name_checker, SPACE_ID, target_root_token,
                 token_manager
             )
         elif tag_count == 2:
             success = process_two_level_tag(
                 node_token, doc_title, tag, creator,
-                name_checker, node_finder, SPACE_ID, target_root_token,
+                name_checker, SPACE_ID, target_root_token,
                 token_manager
             )
         elif tag_count >= 3:
             success = process_three_level_tag(
                 node_token, doc_title, tag, creator,
-                name_checker, node_finder, SPACE_ID, target_root_token,
+                name_checker, SPACE_ID, target_root_token,
                 token_manager
             )
         else:
@@ -258,137 +425,88 @@ def format_tag_message(tag: Dict) -> str:
             parts.append(f"Tag{i}: {tag[tag_key][0]}")
     return "\n | " + " | ".join(parts)
 
+def _ensure_child_folder(
+    creator: FeishuNodeCreator,
+    name_checker: FolderNameChecker,
+    space_id: str,
+    parent_token: Optional[str],
+    folder_name: str,
+) -> Optional[str]:
+    """在父节点下获取或创建同名文件夹，返回 node_token。"""
+    dup = name_checker.check_duplicate(space_id, folder_name, parent_token)
+    if dup["is_duplicate"]:
+        token = dup.get("node_token")
+        if token:
+            print(f"✅ 找到已存在的节点: {folder_name}")
+            return token
+        return None
+    _, token, new_title = creator.create_lark_node(parent_token or "", folder_name)
+    if not token:
+        return None
+    name_checker.invalidate_children(space_id, parent_token)
+    print(f"✅ 创建新节点: {new_title}")
+    return token
+
+
 def process_single_level_tag(doc_token, doc_title, tag, creator,
-                            name_checker, node_finder, space_id, parent_token,
+                            name_checker, space_id, parent_token,
                             token_manager):
     """处理单级标签"""
     level1tag = tag["tag1"][0]
-    
-    is_duplicate = name_checker.check_duplicate(
-        space_id, level1tag, parent_token
-    )['is_duplicate']
-    
-    if is_duplicate:
-        result = node_finder.get_parent_token_by_node_name(
-            space_id, level1tag, parent_token
-        )
-        if result.get("found"):
-            target_token = result["node_token"]
-            print(f"✅ 找到已存在的节点: {level1tag}")
-        else:
-            return False
-    else:
-        _, target_token, new_title = creator.create_lark_node(parent_token, level1tag)
-        if not target_token:
-            return False
-        print(f"✅ 创建新节点: {new_title}")
-    
+    target_token = _ensure_child_folder(
+        creator, name_checker, space_id, parent_token, level1tag
+    )
+    if not target_token:
+        return False
     return copy_document(doc_token, doc_title, target_token, token_manager)
 
+
 def process_two_level_tag(doc_token, doc_title, tag, creator,
-                         name_checker, node_finder, space_id, parent_token,
+                         name_checker, space_id, parent_token,
                          token_manager):
     """处理二级标签"""
     level1tag = tag["tag1"][0]
     level2tag = tag["tag2"][0]
-    
-    level1_exists = name_checker.check_duplicate(
-        space_id, level1tag, parent_token
-    )['is_duplicate']
-    
-    if level1_exists:
-        result = node_finder.get_parent_token_by_node_name(
-            space_id, level1tag, parent_token
-        )
-        if not result.get("found"):
-            return False
-        level1_token = result["node_token"]
-        
-        level2_exists = name_checker.check_duplicate(
-            space_id, level2tag, level1_token
-        )['is_duplicate']
-        
-        if level2_exists:
-            result2 = node_finder.get_parent_token_by_node_name(
-                space_id, level2tag, level1_token
-            )
-            if result2.get("found"):
-                target_token = result2["node_token"]
-                print(f"✅ 找到已存在的二级节点: {level2tag}")
-            else:
-                return False
-        else:
-            _, target_token, new_title = creator.create_lark_node(level1_token, level2tag)
-            if not target_token:
-                return False
-            print(f"✅ 创建新二级节点: {new_title}")
-    else:
-        _, level1_token, _ = creator.create_lark_node(parent_token, level1tag)
-        if not level1_token:
-            return False
-        _, target_token, new_title = creator.create_lark_node(level1_token, level2tag)
-        if not target_token:
-            return False
-        print(f"✅ 创建新节点: {level1tag} -> {new_title}")
-    
+
+    level1_token = _ensure_child_folder(
+        creator, name_checker, space_id, parent_token, level1tag
+    )
+    if not level1_token:
+        return False
+
+    target_token = _ensure_child_folder(
+        creator, name_checker, space_id, level1_token, level2tag
+    )
+    if not target_token:
+        return False
     return copy_document(doc_token, doc_title, target_token, token_manager)
 
+
 def process_three_level_tag(doc_token, doc_title, tag, creator,
-                           name_checker, node_finder, space_id, parent_token,
+                           name_checker, space_id, parent_token,
                            token_manager):
     """处理三级标签"""
     level1tag = tag["tag1"][0]
     level2tag = tag["tag2"][0]
     level3tag = tag["tag3"][0]
-    
-    level1_exists = name_checker.check_duplicate(
-        space_id, level1tag, parent_token
-    )['is_duplicate']
-    
-    if level1_exists:
-        result1 = node_finder.get_parent_token_by_node_name(space_id, level1tag, parent_token)
-        if not result1.get("found"):
-            return False
-        level1_token = result1["node_token"]
-        
-        level2_exists = name_checker.check_duplicate(space_id, level2tag, level1_token)['is_duplicate']
-        
-        if level2_exists:
-            result2 = node_finder.get_parent_token_by_node_name(space_id, level2tag, level1_token)
-            if not result2.get("found"):
-                return False
-            level2_token = result2["node_token"]
-            
-            level3_exists = name_checker.check_duplicate(space_id, level3tag, level2_token)['is_duplicate']
-            
-            if level3_exists:
-                result3 = node_finder.get_parent_token_by_node_name(space_id, level3tag, level2_token)
-                if result3.get("found"):
-                    target_token = result3["node_token"]
-                else:
-                    return False
-            else:
-                _, target_token, _ = creator.create_lark_node(level2_token, level3tag)
-                if not target_token:
-                    return False
-        else:
-            _, level2_token, _ = creator.create_lark_node(level1_token, level2tag)
-            if not level2_token:
-                return False
-            _, target_token, _ = creator.create_lark_node(level2_token, level3tag)
-            if not target_token:
-                return False
-    else:
-        _, level1_token, _ = creator.create_lark_node(parent_token, level1tag)
-        if not level1_token:
-            return False
-        _, level2_token, _ = creator.create_lark_node(level1_token, level2tag)
-        if not level2_token:
-            return False
-        _, target_token, _ = creator.create_lark_node(level2_token, level3tag)
-        if not target_token:
-            return False
-    
+
+    level1_token = _ensure_child_folder(
+        creator, name_checker, space_id, parent_token, level1tag
+    )
+    if not level1_token:
+        return False
+
+    level2_token = _ensure_child_folder(
+        creator, name_checker, space_id, level1_token, level2tag
+    )
+    if not level2_token:
+        return False
+
+    target_token = _ensure_child_folder(
+        creator, name_checker, space_id, level2_token, level3tag
+    )
+    if not target_token:
+        return False
     return copy_document(doc_token, doc_title, target_token, token_manager)
 
 def copy_document(doc_token: str, doc_title: str, target_folder_token: str, token_manager: TokenManager) -> bool:
@@ -431,6 +549,8 @@ def main():
     print(f"   - 目标目录: {TARGET_ROOT_NAME}")
     print(f"   - 使用缓存: {USE_CACHE}")
     print(f"   - 最大文档数: {MAX_DOCUMENTS if MAX_DOCUMENTS else '无限制'}")
+    print(f"   - 并行读取: {READ_WORKERS} | 并行分类: {CLASSIFY_WORKERS} | LLM重试: {LLM_MAX_RETRIES}")
+    print(f"   - 分类正文上限: {CLASSIFY_MAX_CHARS} 字符 | 分类缓存: {USE_CLASSIFY_CACHE}")
     
     # 1. 创建 TokenManager
     token_manager = TokenManager(FEISHU_APP_ID, FEISHU_APP_SECRET)
@@ -448,10 +568,17 @@ def main():
     # 2. 初始化组件
     print("\n🔧 步骤2: 初始化组件...")
     reader = FeishuDocumentReader(token_manager)
-    classifier = QwenTreeClassifier(Qwen_AI_KEY)
+    classify_cache = ClassifyCache() if USE_CLASSIFY_CACHE else None
+    classifier = QwenTreeClassifier(
+        Qwen_AI_KEY,
+        max_content_chars=CLASSIFY_MAX_CHARS,
+        verbose=CLASSIFY_VERBOSE,
+        cache=classify_cache,
+        max_retries=LLM_MAX_RETRIES,
+        request_timeout=LLM_REQUEST_TIMEOUT,
+    )
     creator = FeishuNodeCreator(token_manager, SPACE_ID)
     name_checker = FolderNameChecker(token_manager)
-    node_finder = FeishuWikiNodeFinder(token_manager)
     tag_adder = FeishuDocumentTagAdder(token_manager)
     print("✅ 组件初始化完成")
     
@@ -498,41 +625,81 @@ def main():
     processed_tokens = load_processing_progress()
     print(f"📊 已处理文档数: {len(processed_tokens)}")
     
-    # 6. 处理每个文档
+    # 6. 批量读取 + 并行分类，再串行复制/打标
     print("\n🔄 步骤5: 开始处理文档...")
     success_count = 0
     fail_count = 0
     skip_count = 0
-    
-    for idx, doc in enumerate(all_documents, 1):
-        node_token = doc["node_token"]
-        obj_token = doc.get("obj_token") or node_token
-        doc_title = doc["title"]
-        
-        if node_token in processed_tokens:
-            print(f"\n[{idx}/{len(all_documents)}] ⏭️ 跳过已处理文档: {doc_title}")
-            skip_count += 1
-            continue
-        
-        success = process_single_document(
-            node_token, obj_token, doc_title, reader, classifier, creator,
-            name_checker, node_finder, tag_adder, token_manager, processed_tokens,
-            target_root_token
+
+    pending_docs = [
+        doc for doc in all_documents
+        if doc["node_token"] not in processed_tokens
+    ]
+    skip_count = len(all_documents) - len(pending_docs)
+    if skip_count:
+        print(f"⏭️ 跳过已处理文档: {skip_count} 个")
+
+    read_results: Dict[str, Tuple[str, Optional[str]]] = {}
+    classify_results: Dict[str, Optional[Dict]] = {}
+
+    if pending_docs:
+        print(f"\n📖 并行读取 {len(pending_docs)} 个文档 (workers={READ_WORKERS})...")
+        t_read = datetime.now()
+        read_results = batch_read_contents(pending_docs, reader, READ_WORKERS)
+        print(f"✅ 读取完成，耗时 {(datetime.now() - t_read).total_seconds():.1f}s")
+
+        print(f"\n🤖 并行 AI 分类 (workers={CLASSIFY_WORKERS})...")
+        t_cls = datetime.now()
+        classify_results = batch_classify_documents(
+            read_results, classifier, CLASSIFY_WORKERS
         )
-        
+        print(f"✅ 分类完成，耗时 {(datetime.now() - t_cls).total_seconds():.1f}s")
+
+    doc_by_obj: Dict[str, Dict] = {
+        (doc.get("obj_token") or doc["node_token"]): doc
+        for doc in pending_docs
+    }
+    total_pending = len(pending_docs)
+    processed_in_run = 0
+
+    for obj_token, (doc_title, content) in read_results.items():
+        doc = doc_by_obj[obj_token]
+        node_token = doc["node_token"]
+        processed_in_run += 1
+        idx = processed_in_run
+
+        if not content:
+            print(f"\n[{idx}/{total_pending}] ⚠️ 文档内容为空，跳过: {doc_title}")
+            fail_count += 1
+            continue
+
+        tag = classify_results.get(obj_token)
+        if not tag:
+            print(f"\n[{idx}/{total_pending}] ❌ 分类失败，跳过: {doc_title}")
+            fail_count += 1
+            continue
+
+        success = process_single_document(
+            node_token, obj_token, doc_title, creator,
+            name_checker, tag_adder, token_manager, target_root_token, tag
+        )
+
         if success:
             success_count += 1
             processed_tokens.add(node_token)
         else:
             fail_count += 1
-        
-        if idx % 5 == 0:
+
+        if processed_in_run % 5 == 0:
             save_processing_progress(processed_tokens)
-        
+
         elapsed = (datetime.now() - start_time).total_seconds()
-        avg_time = elapsed / idx if idx > 0 else 0
-        remaining = (len(all_documents) - idx) * avg_time
-        print(f"\n📈 进度: {idx}/{len(all_documents)} | 成功: {success_count} | 失败: {fail_count} | 跳过: {skip_count}")
+        avg_time = elapsed / processed_in_run if processed_in_run > 0 else 0
+        remaining = (total_pending - processed_in_run) * avg_time
+        print(
+            f"\n📈 进度: {processed_in_run}/{total_pending} | "
+            f"成功: {success_count} | 失败: {fail_count} | 跳过: {skip_count}"
+        )
         if remaining > 0:
             print(f"⏱️ 预计剩余时间: {remaining/60:.1f} 分钟")
     
@@ -558,7 +725,12 @@ def main():
     save_processing_progress(processed_tokens)
 
 if __name__ == "__main__":
+    log_path = None
+    if SAVE_RUN_LOG:
+        log_path = setup_run_log(LOG_DIR)
     try:
+        if log_path:
+            print(f"📝 日志文件: {log_path}")
         main()
     except KeyboardInterrupt:
         print("\n\n⚠️ 用户中断程序")
