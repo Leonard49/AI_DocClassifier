@@ -66,7 +66,10 @@ class FeishuDocumentReader:
         code = data.get("code")
         if code == 0:
             payload = data.get("data", {})
-            return payload.get("content", ""), 0, data.get("msg")
+            content = payload.get("content", "")
+            if not (content or "").strip():
+                return None, 0, data.get("msg")
+            return content, 0, data.get("msg")
         return None, code, data.get("msg")
 
     def get_raw_content(

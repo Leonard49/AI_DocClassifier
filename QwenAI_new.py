@@ -483,10 +483,10 @@ Others
         content: str,
         obj_token: Optional[str] = None,
         title: Optional[str] = None,
-    ) -> Dict[str, List[str]]:
-        """主分类方法，返回 JSON 格式的标签路径"""
-        if not (content or "").strip() and not title:
-            return {"tag1": ["Others"]}
+    ) -> Optional[Dict[str, List[str]]]:
+        """主分类方法，返回 JSON 格式的标签路径；正文为空时不分类（不论标题）。"""
+        if not (content or "").strip():
+            return None
 
         if self.cache and obj_token:
             cached = self.cache.get(obj_token, content or "")

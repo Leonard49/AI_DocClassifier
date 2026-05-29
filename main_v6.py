@@ -43,12 +43,12 @@ FEISHU_APP_SECRET = "srbaL4nDLMAoEa9jYFQMrhtipJv2ZfvD"
 SPACE_ID = "7595802147485141976"  # 新的空间ID
 
 # ========== 指定要扫描的子目录 ==========
-SCAN_ROOT_TOKEN = "JUWxwwvfJiLWQvk9HLHc3b24nie"  # 填充需要遍历的根目录的token
+SCAN_ROOT_TOKEN = "F2NEwKAuGiKA7GkCEVncVIYanwh"  # 填充需要遍历的根目录的token
 SCAN_FOLDER_NAME = None  # 如果设置了 SCAN_ROOT_TOKEN，这个设为 None
 
 # ========== 目标根节点配置（文档复制到这里）==========
-TARGET_PARENT_TOKEN = "GPFewOUJ1iGBrGks7R7cB137nDh"
-TARGET_ROOT_NAME = "HyTest"
+TARGET_PARENT_TOKEN = "VIhFwmMLkihttkke8RLcQ4cAnmg"
+TARGET_ROOT_NAME = "HyTest2"
 FALLBACK_PARENT_TOKEN = None
 
 # ========== 处理配置 ==========
@@ -76,6 +76,11 @@ Qwen_AI_KEY = "sk-9neu2wGxtXiOb9EcBDlL6g"
 # ============================================================
 # 辅助函数（使用 TokenManager 统一 token 管理）
 # ============================================================
+
+def has_body_content(content: Optional[str]) -> bool:
+    """正文是否有实质内容（仅空白视为空，与标题无关）。"""
+    return bool((content or "").strip())
+
 
 def _format_eta(elapsed: float, done: int, total: int) -> str:
     if done <= 0 or done >= total:
@@ -255,7 +260,7 @@ def batch_read_contents(
         results[obj_token] = (title, content)
         with lock:
             done += 1
-            if content:
+            if has_body_content(content):
                 ok += 1
             if done == 1 or done == total or done % progress_interval == 0:
                 _print_batch_progress(
@@ -290,7 +295,7 @@ def batch_classify_documents(
 
     for obj_token, item in read_results.items():
         title, content = item
-        if not content:
+        if not has_body_content(content):
             tags[obj_token] = None
             empty_skip += 1
         else:
@@ -630,6 +635,7 @@ def main():
     success_count = 0
     fail_count = 0
     skip_count = 0
+    empty_content_skip = 0
 
     pending_docs = [
         doc for doc in all_documents
@@ -668,9 +674,12 @@ def main():
         processed_in_run += 1
         idx = processed_in_run
 
-        if not content:
-            print(f"\n[{idx}/{total_pending}] ⚠️ 文档内容为空，跳过: {doc_title}")
-            fail_count += 1
+        if not has_body_content(content):
+            print(
+                f"\n[{idx}/{total_pending}] ⏭️ 正文为空，跳过（不论标题）: {doc_title}"
+            )
+            empty_content_skip += 1
+            skip_count += 1
             continue
 
         tag = classify_results.get(obj_token)
@@ -698,7 +707,8 @@ def main():
         remaining = (total_pending - processed_in_run) * avg_time
         print(
             f"\n📈 进度: {processed_in_run}/{total_pending} | "
-            f"成功: {success_count} | 失败: {fail_count} | 跳过: {skip_count}"
+            f"成功: {success_count} | 失败: {fail_count} | "
+            f"跳过: {skip_count}（含正文空 {empty_content_skip}）"
         )
         if remaining > 0:
             print(f"⏱️ 预计剩余时间: {remaining/60:.1f} 分钟")
@@ -717,6 +727,8 @@ def main():
     print(f"   - 成功处理: {success_count}")
     print(f"   - 失败: {fail_count}")
     print(f"   - 跳过: {skip_count}")
+    if empty_content_skip:
+        print(f"   - 其中正文为空跳过: {empty_content_skip}")
     if success_count + fail_count > 0:
         print(f"   - 成功率: {success_count/(success_count+fail_count)*100:.1f}%")
     print(f"   - 总耗时: {elapsed/60:.1f} 分钟")
