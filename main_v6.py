@@ -725,12 +725,13 @@ def main():
     save_processing_progress(processed_tokens)
 
 if __name__ == "__main__":
-    log_path = None
+    log_paths = None
     if SAVE_RUN_LOG:
-        log_path = setup_run_log(LOG_DIR)
+        log_paths = setup_run_log(LOG_DIR)
     try:
-        if log_path:
-            print(f"📝 日志文件: {log_path}")
+        if log_paths:
+            print(f"📝 实时日志: {log_paths['latest']}")
+            print(f"📝 归档日志: {log_paths['stamped']}")
         main()
     except KeyboardInterrupt:
         print("\n\n⚠️ 用户中断程序")

@@ -6,3 +6,4 @@ wiki_scan_cache.db
 processing_progress.json
 logs/
 run.log
+!logs/.gitkeep
