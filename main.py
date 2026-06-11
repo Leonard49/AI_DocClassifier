@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-飞书文档分类 - 指定子目录扫描版本（集成 TokenManager）
+Feishu wiki document classifier: scan, classify with LLM, copy to tagged folders.
 """
 
 import json
@@ -20,58 +20,42 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Optional, List, Dict, Tuple
 
-# 导入原有模块
-from TokenManager import TokenManager
-from CreateFeishuNode import FeishuNodeCreator
-from Copydoc import FeishuWikiCopier
-from ReadFeishuRaw import FeishuDocumentReader
-from AddTagBlockV2 import FeishuDocumentTagAdder
-from QwenAI_new import QwenTreeClassifier
-from FeishuTitleCheck import FolderNameChecker
-from SimpleWikiScanner import SimpleWikiScanner
+import config
+from add_tag_block import FeishuDocumentTagAdder
 from classify_cache import ClassifyCache
+from copy_doc import FeishuWikiCopier
+from create_feishu_node import FeishuNodeCreator
+from feishu_title_check import FolderNameChecker
+from qwen_classifier import QwenTreeClassifier
+from read_feishu_doc import FeishuDocumentReader
 from run_logging import setup_run_log
+from token_manager import TokenManager
+from wiki_scanner import SimpleWikiScanner
 
-# ============================================================
-# 配置部分
-# ============================================================
-
-FEISHU_APP_ID = "cli_a93910bbc5f95cc2"
-FEISHU_APP_SECRET = "srbaL4nDLMAoEa9jYFQMrhtipJv2ZfvD"
-
-# 知识库配置
-SPACE_ID = "7595802147485141976"  # 新的空间ID
-
-# ========== 指定要扫描的子目录 ==========
-SCAN_ROOT_TOKEN = "F2NEwKAuGiKA7GkCEVncVIYanwh"  # 填充需要遍历的根目录的token
-SCAN_FOLDER_NAME = None  # 如果设置了 SCAN_ROOT_TOKEN，这个设为 None
-
-# ========== 目标根节点配置（文档复制到这里）==========
-TARGET_PARENT_TOKEN = "VIhFwmMLkihttkke8RLcQ4cAnmg"
-TARGET_ROOT_NAME = "HyTest2"
-FALLBACK_PARENT_TOKEN = None
-
-# ========== 处理配置 ==========
-USE_CACHE = False
-MAX_DOCUMENTS = None
-ENABLE_TAG_ADD = True
-SAVE_PROGRESS = True
-FORCE_RESCAN = False
-SAVE_RUN_LOG = True       # 自动保存终端输出到 logs/run_YYYYMMDD_HHMMSS.log
-LOG_DIR = "logs"
-
-# ========== 性能优化配置 ==========
-READ_WORKERS = 3          # 并行读取（全局限速 4 次/秒，勿超过飞书 docx 5 次/秒上限）
-CLASSIFY_WORKERS = 4      # 并行 AI 分类（与 llm_rate_limit 并发上限配合，过大易 502）
-CLASSIFY_MAX_CHARS = 3000 # 送入模型的正文字符上限（含标题前缀）
-USE_CLASSIFY_CACHE = True # SQLite 分类结果缓存
-CLASSIFY_VERBOSE = False  # 批量时关闭逐条 AI 日志
-LLM_MAX_RETRIES = 6       # 502/503 等可重试错误的最大次数
-LLM_REQUEST_TIMEOUT = 120.0
-PROGRESS_INTERVAL = 10    # 每处理 N 个文档打印一次进度
-
-# AI 配置
-Qwen_AI_KEY = "sk-9neu2wGxtXiOb9EcBDlL6g"
+FEISHU_APP_ID = config.FEISHU_APP_ID
+FEISHU_APP_SECRET = config.FEISHU_APP_SECRET
+SPACE_ID = config.SPACE_ID
+SCAN_ROOT_TOKEN = config.SCAN_ROOT_TOKEN
+SCAN_FOLDER_NAME = config.SCAN_FOLDER_NAME
+TARGET_PARENT_TOKEN = config.TARGET_PARENT_TOKEN
+TARGET_ROOT_NAME = config.TARGET_ROOT_NAME
+FALLBACK_PARENT_TOKEN = config.FALLBACK_PARENT_TOKEN
+USE_CACHE = config.USE_CACHE
+MAX_DOCUMENTS = config.MAX_DOCUMENTS
+ENABLE_TAG_ADD = config.ENABLE_TAG_ADD
+SAVE_PROGRESS = config.SAVE_PROGRESS
+FORCE_RESCAN = config.FORCE_RESCAN
+SAVE_RUN_LOG = config.SAVE_RUN_LOG
+LOG_DIR = config.LOG_DIR
+READ_WORKERS = config.READ_WORKERS
+CLASSIFY_WORKERS = config.CLASSIFY_WORKERS
+CLASSIFY_MAX_CHARS = config.CLASSIFY_MAX_CHARS
+USE_CLASSIFY_CACHE = config.USE_CLASSIFY_CACHE
+CLASSIFY_VERBOSE = config.CLASSIFY_VERBOSE
+LLM_MAX_RETRIES = config.LLM_MAX_RETRIES
+LLM_REQUEST_TIMEOUT = config.LLM_REQUEST_TIMEOUT
+PROGRESS_INTERVAL = config.PROGRESS_INTERVAL
+QWEN_API_KEY = config.QWEN_API_KEY
 
 # ============================================================
 # 辅助函数（使用 TokenManager 统一 token 管理）
@@ -216,7 +200,9 @@ def save_processing_progress(processed_tokens: set, filename: str = "processing_
 
 def load_processing_progress(filename: str = "processing_progress.json") -> set:
     """加载处理进度"""
-    if not SAVE_PROGRESS:
+    if not SAVE_PROGRESS or FORCE_RESCAN:
+        if FORCE_RESCAN:
+            print("⚠️ FORCE_RESCAN 已启用，将重新处理所有文档")
         return set()
     
     try:
@@ -575,7 +561,7 @@ def main():
     reader = FeishuDocumentReader(token_manager)
     classify_cache = ClassifyCache() if USE_CLASSIFY_CACHE else None
     classifier = QwenTreeClassifier(
-        Qwen_AI_KEY,
+        QWEN_API_KEY,
         max_content_chars=CLASSIFY_MAX_CHARS,
         verbose=CLASSIFY_VERBOSE,
         cache=classify_cache,
@@ -737,6 +723,12 @@ def main():
     save_processing_progress(processed_tokens)
 
 if __name__ == "__main__":
+    try:
+        config.validate()
+    except ValueError as exc:
+        print(f"❌ 配置错误: {exc}")
+        sys.exit(1)
+
     log_paths = None
     if SAVE_RUN_LOG:
         log_paths = setup_run_log(LOG_DIR)

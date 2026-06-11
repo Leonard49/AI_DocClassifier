@@ -1,7 +1,7 @@
 import logging
 from typing import Any, Dict, Optional
 import requests
-from TokenManager import TokenManager
+from token_manager import TokenManager
 logger = logging.getLogger(__name__)
 class FeishuDocumentTagAdder:
     """在飞书 Docx 文档顶部插入分类标签文本块。"""

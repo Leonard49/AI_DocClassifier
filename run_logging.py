@@ -135,7 +135,7 @@ def setup_run_log(log_dir: str = "logs") -> Dict[str, str]:
     _log_files = [stamped_f, latest_f]
 
     header = (
-        f"=== AI_DocMover run log ===\n"
+        f"=== AI_DocClassifier run log ===\n"
         f"Started: {datetime.now().isoformat()}\n"
         f"CWD: {os.getcwd()}\n"
         f"{'=' * 40}\n"

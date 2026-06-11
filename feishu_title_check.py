@@ -2,7 +2,7 @@ import threading
 import requests
 from collections import Counter
 from typing import Dict, List, Optional, Tuple
-from TokenManager import TokenManager
+from token_manager import TokenManager
 
 
 class FolderNameChecker:

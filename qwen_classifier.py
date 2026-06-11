@@ -31,8 +31,7 @@ RETRYABLE_HTTP_STATUS = frozenset({429, 500, 502, 503, 504})
 class QwenTreeClassifier:
     """使用 Qwen API 对文本进行多层级标签树分类，输出 JSON 格式的路径"""
 
-    # 固定配置
-    QWEN_API_KEY = "sk-9neu2wGxtXiOb9EcBDlL6g"
+    # Fixed LLM gateway settings (override via constructor if needed)
     QWEN_BASE_URL = "https://qlitellm.phicotek.com/v1"
     QWEN_MODEL = "qwen3.6-plus"
 
@@ -242,9 +241,9 @@ class QwenTreeClassifier:
         max_retries: int = 6,
         request_timeout: float = 120.0,
     ):
-        self.api_key = api_key or self.QWEN_API_KEY
-        if self.api_key == "your_qwen_api_key_here":
-            raise ValueError("请设置有效的 Qwen API Key")
+        self.api_key = api_key
+        if not self.api_key:
+            raise ValueError("请设置有效的 Qwen API Key（环境变量 QWEN_API_KEY）")
         self.model = self.QWEN_MODEL
         self.base_url = self.QWEN_BASE_URL
         # 关闭 SDK 内置短间隔重试，避免 4 路并发时同时打出大量 502 重试

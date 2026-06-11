@@ -3,7 +3,7 @@ import requests
 import sys
 import urllib.parse
 from typing import Dict, Any, Tuple, Optional
-from TokenManager import TokenManager
+from token_manager import TokenManager
 
 class FeishuWikiCopier:
     """飞书知识库节点复制 - 使用 TokenManager 管理 token"""

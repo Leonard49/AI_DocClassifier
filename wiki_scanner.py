@@ -8,7 +8,7 @@ from collections import deque
 import logging
 import os
 
-from TokenManager import TokenManager  # 导入 TokenManager
+from token_manager import TokenManager
 
 _DEFAULT_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wiki_scan_cache.db")
 

@@ -4,7 +4,7 @@ from typing import Optional
 
 import requests
 
-from TokenManager import TokenManager
+from token_manager import TokenManager
 from feishu_rate_limit import DOCX_READ_LIMITER
 
 logger = logging.getLogger(__name__)
