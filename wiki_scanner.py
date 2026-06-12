@@ -39,6 +39,7 @@ class SimpleWikiScanner:
             "api_calls": 0,
             "nodes_scanned": 0,
             "documents_found": 0,
+            "non_leaf_docx_skipped": 0,
         }
 
         if self.enable_db_cache:
@@ -79,6 +80,28 @@ class SimpleWikiScanner:
     def _get_tenant_access_token(self) -> str:
         """通过 TokenManager 获取有效的 tenant_access_token"""
         return self.token_manager.get_token()
+
+    @staticmethod
+    def _is_leaf_node(node: Dict) -> bool:
+        """叶子节点：无子节点。"""
+        return not node.get("has_child")
+
+    def _maybe_collect_leaf_document(self, node: Dict, all_documents: List[Dict]) -> None:
+        """仅收集叶子 docx 节点，跳过作为目录/索引的非叶子文档。"""
+        if node.get("obj_type") != "docx":
+            return
+
+        node_token = node.get("node_token")
+        title = node.get("title")
+
+        if not self._is_leaf_node(node):
+            self.stats["non_leaf_docx_skipped"] += 1
+            logger.debug(f"跳过非叶子文档: {title} ({node_token})")
+            return
+
+        all_documents.append(node)
+        logger.info(f"找到叶子文档: {title} ({node_token})")
+        self.stats["documents_found"] += 1
     
     def scan_space(self, space_id: str, root_token: Optional[str] = None, use_cache: bool = True) -> List[Dict]:
         """
@@ -90,7 +113,9 @@ class SimpleWikiScanner:
         :return: 文档列表
         """
         self._use_cache = use_cache and self.enable_db_cache
-        logger.info(f"开始扫描知识空间 {space_id}")
+        self.stats["documents_found"] = 0
+        self.stats["non_leaf_docx_skipped"] = 0
+        logger.info(f"开始扫描知识空间 {space_id}（仅收集叶子 docx）")
         
         # 验证空间访问
         if not self._verify_space_access(space_id):
@@ -111,10 +136,14 @@ class SimpleWikiScanner:
         scanned_nodes = set()
         pending_nodes = deque()
         
+        cache_key = "ROOT_leaf"
         if use_cache and self.enable_db_cache:
-            cached_docs, scanned_nodes, pending_nodes = self._load_progress(space_id, "ROOT")
+            cached_docs, scanned_nodes, pending_nodes = self._load_progress(space_id, cache_key)
             all_documents.extend(cached_docs)
-            logger.info(f"从缓存恢复: 已扫描 {len(scanned_nodes)} 个节点，已找到 {len(all_documents)} 个文档")
+            logger.info(
+                f"从缓存恢复: 已扫描 {len(scanned_nodes)} 个节点，"
+                f"已找到 {len(all_documents)} 个叶子文档"
+            )
         
         if not pending_nodes:
             pending_nodes.append(None)
@@ -148,12 +177,9 @@ class SimpleWikiScanner:
                     node["parent_node_token"] = current_parent
                     self._cache_node(node)
                     
-                    if node.get("obj_type") == "docx":
-                        all_documents.append(node)
-                        logger.info(f"找到文档: {node.get('title')} ({node_token})")
-                        self.stats["documents_found"] += 1
-                    
-                    if node.get("has_child") or node.get("node_type") == "origin":
+                    self._maybe_collect_leaf_document(node, all_documents)
+
+                    if node.get("has_child"):
                         pending_nodes.append(node_token)
                 
                 scanned_nodes.add(parent_key)
@@ -162,12 +188,19 @@ class SimpleWikiScanner:
                 time.sleep(0.1)
             
             if processed_count % 50 == 0:
-                self._save_progress(space_id, "ROOT", scanned_nodes, pending_nodes, all_documents)
-                logger.info(f"进度: 已扫描 {processed_count} 个节点，找到 {len(all_documents)} 个文档")
+                self._save_progress(space_id, cache_key, scanned_nodes, pending_nodes, all_documents)
+                logger.info(
+                    f"进度: 已扫描 {processed_count} 个节点，"
+                    f"找到 {len(all_documents)} 个叶子文档，"
+                    f"跳过非叶子 docx {self.stats['non_leaf_docx_skipped']} 个"
+                )
         
-        logger.info(f"扫描完成！共找到 {len(all_documents)} 个文档")
+        logger.info(
+            f"扫描完成！共找到 {len(all_documents)} 个叶子文档，"
+            f"跳过非叶子 docx {self.stats['non_leaf_docx_skipped']} 个"
+        )
         self.stats["nodes_scanned"] = processed_count
-        self._save_progress(space_id, "ROOT", scanned_nodes, pending_nodes, all_documents)
+        self._save_progress(space_id, cache_key, scanned_nodes, pending_nodes, all_documents)
         
         return all_documents
     
@@ -178,11 +211,14 @@ class SimpleWikiScanner:
         pending_nodes = deque()
         
         # 检查缓存
-        cache_key = f"NODE_{node_token}"
+        cache_key = f"NODE_{node_token}_leaf"
         if use_cache and self.enable_db_cache:
             cached_docs, scanned_nodes, pending_nodes = self._load_progress(space_id, cache_key)
             all_documents.extend(cached_docs)
-            logger.info(f"从缓存恢复: 已扫描 {len(scanned_nodes)} 个节点，已找到 {len(all_documents)} 个文档")
+            logger.info(
+                f"从缓存恢复: 已扫描 {len(scanned_nodes)} 个节点，"
+                f"已找到 {len(all_documents)} 个叶子文档"
+            )
         
         if not pending_nodes:
             # 直接从指定节点开始
@@ -216,12 +252,9 @@ class SimpleWikiScanner:
                     node["parent_node_token"] = current_parent
                     self._cache_node(node)
                     
-                    if node.get("obj_type") == "docx":
-                        all_documents.append(node)
-                        logger.info(f"找到文档: {node.get('title')} ({node_token_child})")
-                        self.stats["documents_found"] += 1
-                    
-                    if node.get("has_child") or node.get("node_type") == "origin":
+                    self._maybe_collect_leaf_document(node, all_documents)
+
+                    if node.get("has_child"):
                         pending_nodes.append(node_token_child)
                 
                 scanned_nodes.add(current_parent)
@@ -231,9 +264,16 @@ class SimpleWikiScanner:
             
             if processed_count % 50 == 0:
                 self._save_progress(space_id, cache_key, scanned_nodes, pending_nodes, all_documents)
-                logger.info(f"进度: 已扫描 {processed_count} 个节点，找到 {len(all_documents)} 个文档")
+                logger.info(
+                    f"进度: 已扫描 {processed_count} 个节点，"
+                    f"找到 {len(all_documents)} 个叶子文档，"
+                    f"跳过非叶子 docx {self.stats['non_leaf_docx_skipped']} 个"
+                )
         
-        logger.info(f"扫描完成！共找到 {len(all_documents)} 个文档")
+        logger.info(
+            f"扫描完成！共找到 {len(all_documents)} 个叶子文档，"
+            f"跳过非叶子 docx {self.stats['non_leaf_docx_skipped']} 个"
+        )
         self.stats["nodes_scanned"] = processed_count
         self._save_progress(space_id, cache_key, scanned_nodes, pending_nodes, all_documents)
         

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Feishu wiki document classifier: scan, classify with LLM, copy to tagged folders.
+Feishu wiki document classifier: scan leaf documents, classify with LLM, copy to tagged folders.
 """
 
 import json
@@ -589,8 +589,8 @@ def main():
     print(f"\n✅ 扫描范围 token: {scan_root_token}")
     print(f"✅ 目标目录 token: {target_root_token if target_root_token else '知识库根目录'}")
     
-    # 4. 扫描文档
-    print("\n📂 步骤4: 扫描文档...")
+    # 4. 扫描叶子文档（仅 has_child=false 的 docx）
+    print("\n📂 步骤4: 扫描叶子文档...")
     scanner = SimpleWikiScanner(token_manager, enable_db_cache=USE_CACHE)
     
     all_documents = scanner.scan_space(
@@ -599,10 +599,13 @@ def main():
         use_cache=USE_CACHE
     )
     
-    print(f"\n✅ 扫描完成！在指定目录下找到 {len(all_documents)} 个文档")
+    print(f"\n✅ 扫描完成！在指定目录下找到 {len(all_documents)} 个叶子文档")
+    non_leaf_skipped = scanner.stats.get("non_leaf_docx_skipped", 0)
+    if non_leaf_skipped:
+        print(f"⏭️ 已跳过 {non_leaf_skipped} 个非叶子 docx（目录/索引页）")
     
     if all_documents:
-        print("\n找到的文档列表:")
+        print("\n找到的叶子文档列表:")
         for idx, doc in enumerate(all_documents[:20], 1):
             print(f"  {idx}. {doc.get('title')}")
         if len(all_documents) > 20:
@@ -709,7 +712,9 @@ def main():
     print(f"📊 统计信息:")
     print(f"   - 扫描目录: {SCAN_ROOT_TOKEN}")
     print(f"   - 目标目录: {TARGET_ROOT_NAME}")
-    print(f"   - 找到文档: {len(all_documents)}")
+    print(f"   - 找到叶子文档: {len(all_documents)}")
+    if non_leaf_skipped:
+        print(f"   - 跳过非叶子 docx: {non_leaf_skipped}")
     print(f"   - 成功处理: {success_count}")
     print(f"   - 失败: {fail_count}")
     print(f"   - 跳过: {skip_count}")
