@@ -1,7 +1,7 @@
 # AI DocClassifier 系统说明文档
 
 > 飞书知识库文档自动分类系统 — 机制说明、配置参数与流程图  
-> 整理日期：2026-06-12
+> 整理日期：2026-06-16（含多人并行与共享去重）
 
 ---
 
@@ -9,14 +9,15 @@
 
 1. [系统目标](#一系统目标)
 2. [整体架构](#二整体架构)
-3. [运行流程（7 步）](#三运行流程7-步)
+3. [运行流程](#三运行流程)
 4. [分类机制](#四分类机制)
 5. [配置参数说明](#五配置参数说明)
 6. [运行时生成的文件](#六运行时生成的文件)
 7. [常见运维场景](#七常见运维场景)
 8. [并发模型总结](#八并发模型总结)
-9. [流程框图](#九流程框图)
-10. [附录：跳过/失败分支汇总](#十附录跳过失败分支汇总)
+9. [多人并行协作](#九多人并行协作)
+10. [流程框图](#十流程框图)
+11. [附录：跳过/失败分支汇总](#十一附录跳过失败分支汇总)
 
 ---
 
@@ -28,8 +29,9 @@
 2. 读取正文，调用 **Qwen LLM** 按预定义标签树分类
 3. 在目标目录下按分类结果**创建文件夹层级并复制文档**
 4. 可选：在**原文档**中插入分类标签块
+5. 支持**多人并行**：各人扫描不同源目录，共享同一目标目录，按 `obj_token` 全局去重
 
-整体采用「**扫描 → 批量读 → 批量分类 → 串行写回**」的流水线架构。
+整体采用「**扫描 → 批量读 → 批量分类 → 串行写回 → 目标目录验证**」的流水线架构。
 
 ---
 
@@ -47,12 +49,13 @@
 | 文件夹 | `create_feishu_node.py` / `feishu_title_check.py` | 创建/查找目标文件夹 |
 | 复制 | `copy_doc.py` | 将文档复制到目标文件夹 |
 | 打标 | `add_tag_block.py` | 在原文档插入标签块 |
+| 共享去重 | `shared_state.py` | 跨进程/跨 worker 的 `obj_token` 复制注册表（SQLite） |
 | 限流 | `feishu_rate_limit.py` / `llm_rate_limit.py` | 飞书读文档 & LLM 调用限速 |
 | 日志 | `run_logging.py` | 终端输出同步写入 `logs/` |
 
 ---
 
-## 三、运行流程（7 步）
+## 三、运行流程
 
 ### 步骤 1：配置校验与 Token 初始化
 
@@ -67,6 +70,7 @@
 - `ClassifyCache`：可选，SQLite 分类结果缓存
 - `FeishuNodeCreator` / `FolderNameChecker`：目标目录管理
 - `FeishuDocumentTagAdder`：原文档打标
+- `SharedCopyState`（`ENABLE_SHARED_DEDUP=true` 时）：多人并行共享去重库
 
 ### 步骤 3：确定扫描源与复制目标
 
@@ -81,6 +85,8 @@
 2. `TARGET_ROOT_NAME`（按名称查找）
 3. `FALLBACK_PARENT_TOKEN`（备选）
 4. 都找不到 → 使用知识库根目录
+
+**目标目录基线统计：** 解析目标 token 后，先递归扫描目标目录，记录处理前的叶子 docx 数量（`target_count_before`）。
 
 ### 步骤 4：扫描叶子文档（`wiki_scanner.py`）
 
@@ -101,7 +107,9 @@
 | 叶子 docx（`has_child=false`） | ✅ 收集，进入后续流程 |
 | 非叶子 docx（目录/索引页，有子节点） | ❌ 跳过，不读、不分类 |
 | 正文为空的叶子 docx | ⏭️ 读取后跳过，不调 LLM |
-| 已在 `processing_progress.json` 中的 node | ⏭️ 跳过（断点续跑） |
+| 已在 `processing_progress.json` 中的 node | ⏭️ 跳过（本机断点续跑） |
+| 已在共享库中复制的 `obj_token` | ⏭️ 跳过（全局去重，多人并行） |
+| 同一扫描内重复 `obj_token`（快捷方式等） | ⏭️ 合并为一次读取/复制 |
 
 **扫描缓存**（`USE_CACHE=true` 时）：
 
@@ -109,11 +117,13 @@
 - JSON：`scanned_documents_{cache_key}.json`
 - 缓存 key 带 `_leaf` 后缀，与旧版全量扫描区分
 
-### 步骤 5：加载处理进度
+### 步骤 5：加载处理进度与全局去重过滤
 
-- 读取 `processing_progress.json` 中已成功的 `node_token` 集合
+- 读取 `processing_progress.json` 中已成功的 `node_token` 集合（按 `SCAN_ROOT_TOKEN` 区分）
 - 若 `FORCE_RESCAN=true` → 忽略进度，全部重跑
-- 若 `scan_root` 与当前 `SCAN_ROOT_TOKEN` 不一致 → 清空进度
+- 若 `scan_root` 与当前 `SCAN_ROOT_TOKEN` 不一致 → 清空本地进度
+- 若启用共享去重：跳过 `SHARED_STATE_DB` 中状态为 `copied` 的 `obj_token`
+- 对待处理列表按 `obj_token` 分组，同一文档只读取和分类一次
 
 ### 步骤 6：批量读取 + 并行分类
 
@@ -142,12 +152,27 @@
 
 对每个分类成功的文档**串行**执行（避免飞书写操作冲突）：
 
-1. 根据 tag 层级（1～3 级）在目标目录下**查找或创建**文件夹链  
-   例：`Smart → BSP → I2C/UART/SPI/CAN`
-2. 调用 wiki copy API 将文档复制到最深层文件夹
-3. 若 `ENABLE_TAG_ADD=true`，在**原文档**插入分类标签块
+1. **全局占位**：`try_claim(obj_token)`，防止多 worker 同时复制同一文档
+2. 根据 tag 层级（1～3 级）在目标目录下**查找或创建**文件夹链（并发创建失败时自动重试）
+3. 若目标子目录已有同名文档，自动重命名为 `标题 (2)`、`标题 (3)` …
+4. 调用 wiki copy API 将文档复制到最深层文件夹
+5. 若 `ENABLE_SHARED_DEDUP=true`，复制成功后写入共享库；失败则 `release_claim`
+6. 若 `ENABLE_TAG_ADD=true`，在**原文档**插入分类标签块
 
 每处理 5 个文档自动保存一次 `processing_progress.json`。
+
+### 步骤 8：目标目录验证与统计
+
+结束时再次递归扫描 `TARGET_PARENT_TOKEN`，统计叶子 docx 数量（`target_count_after`）。
+
+**主要统计口径：**
+
+| 指标 | 含义 |
+|------|------|
+| **成功处理（目标目录实际叶子文档数）** | 结束时扫描目标目录的叶子 docx 总数，与飞书实际一致 |
+| **本次净增（验证）** | `target_count_after - target_count_before` |
+| **本次新复制（本 worker）** | 本进程本次成功复制且全局去重后的篇数 |
+| **全局去重跳过** | 其他同事或前序运行已复制过的 `obj_token` |
 
 ---
 
@@ -225,12 +250,25 @@
 | `LLM_REQUEST_TIMEOUT` | `120` | 单次 LLM 请求超时（秒） |
 | `PROGRESS_INTERVAL` | `10` | 批量读取/分类时每处理 N 个文档打印一次进度 |
 
-### 5.4 布尔值写法
+### 5.4 可选参数 — 多人并行
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `ENABLE_SHARED_DEDUP` | `true` | 是否启用跨 worker 的 `obj_token` 去重 |
+| `SHARED_STATE_DB` | `shared_copy_state.db` | 共享 SQLite 路径；多人协作时放在共享盘，所有人指向同一文件 |
+| `WORKER_ID` | `主机名-PID` | 当前执行者标识，每人应不同 |
+| `CLAIM_TIMEOUT_MINUTES` | `30` | 复制占位超时（分钟），超时后允许其他 worker 重新抢占 |
+
+**多人并行时必须一致：** `SPACE_ID`、`TARGET_PARENT_TOKEN`、`SHARED_STATE_DB`（同一租户下）。
+
+**可以不同：** `FEISHU_APP_ID` / `FEISHU_APP_SECRET`、`SCAN_ROOT_TOKEN`、`WORKER_ID`、`QWEN_API_KEY`。
+
+### 5.5 布尔值写法
 
 以下值均视为 `true`：`1`、`true`、`yes`、`on`（不区分大小写）。  
 未设置或非上述值时使用默认值。
 
-### 5.5 配置示例
+### 5.6 配置示例（单人）
 
 ```env
 FEISHU_APP_ID=cli_xxxxxxxx
@@ -240,14 +278,39 @@ SCAN_ROOT_TOKEN=JUWxwwvfJiLWQvk9HLHc3b24nie
 TARGET_PARENT_TOKEN=GPFewOUJ1iGBrGks7R7cB137nDh
 QWEN_API_KEY=sk-xxxxxxxx
 
-# 可选调优
+ENABLE_SHARED_DEDUP=true
+SHARED_STATE_DB=shared_copy_state.db
+WORKER_ID=alice
+
 READ_WORKERS=3
 CLASSIFY_WORKERS=4
 USE_CLASSIFY_CACHE=true
 SAVE_PROGRESS=true
 ```
 
-### 5.6 同事如何生成本地 `.env`
+### 5.7 配置示例（多人并行）
+
+**主机（共享盘在本机）：**
+
+```env
+WORKER_ID=hydrew
+SCAN_ROOT_TOKEN=token_A
+TARGET_PARENT_TOKEN=GPFewOUJ1iGBrGks7R7cB137nDh
+SHARED_STATE_DB=F:\shared_db\shared_copy_state.db
+ENABLE_SHARED_DEDUP=true
+```
+
+**同事（通过 UNC 访问共享盘）：**
+
+```env
+WORKER_ID=bob
+SCAN_ROOT_TOKEN=token_B
+TARGET_PARENT_TOKEN=GPFewOUJ1iGBrGks7R7cB137nDh
+SHARED_STATE_DB=\\HOSTNAME\shared_db\shared_copy_state.db
+ENABLE_SHARED_DEDUP=true
+```
+
+### 5.8 同事如何生成本地 `.env`
 
 1. 克隆项目后，在项目根目录执行：
 
@@ -270,7 +333,8 @@ SAVE_PROGRESS=true
 
 | 文件 | 触发条件 | 用途 |
 |------|----------|------|
-| `processing_progress.json` | `SAVE_PROGRESS=true` | 已成功处理的 node_token，断点续跑 |
+| `processing_progress.json` | `SAVE_PROGRESS=true` | 本机已成功处理的 `node_token`（按 `SCAN_ROOT_TOKEN` 断点续跑） |
+| `shared_copy_state.db` | `ENABLE_SHARED_DEDUP=true` | 跨 worker 已复制 `obj_token` 注册表（建议放共享盘） |
 | `classify_cache.db` | `USE_CLASSIFY_CACHE=true` | AI 分类结果缓存 |
 | `wiki_scan_cache.db` | `USE_CACHE=true` | wiki 节点扫描缓存 |
 | `scanned_documents_*.json` | `USE_CACHE=true` | 扫描到的文档列表快照 |
@@ -287,7 +351,10 @@ SAVE_PROGRESS=true
 |------|------|
 | 中断后续跑 | 直接重新运行 `main.py`，读取 `processing_progress.json` 跳过已完成项 |
 | 全部重跑 | 删除 `processing_progress.json`，或设 `FORCE_RESCAN=true` |
-| 换扫描目录 | 修改 `SCAN_ROOT_TOKEN`，进度文件会因 `scan_root` 不匹配自动清空 |
+| 换扫描目录 | 修改 `SCAN_ROOT_TOKEN`，本地进度文件会因 `scan_root` 不匹配自动清空 |
+| 多人并行分工 | 每人不同 `SCAN_ROOT_TOKEN` + `WORKER_ID`，共用 `TARGET_PARENT_TOKEN` 与 `SHARED_STATE_DB` |
+| 关闭全局去重 | 设 `ENABLE_SHARED_DEDUP=false`（仅适合单人调试） |
+| 共享库锁冲突 | 降低并行 worker 数量；确认共享文件夹为「修改」权限；避免过多机器同时写 SQLite |
 | 强制重新分类 | 设 `USE_CLASSIFY_CACHE=false`，或删除 `classify_cache.db` |
 | 飞书限流 | 降低 `READ_WORKERS` 到 2 |
 | LLM 502/503 | 降低 `CLASSIFY_WORKERS`，或调整 `llm_rate_limit.py` 中的并发/QPS |
@@ -299,21 +366,66 @@ SAVE_PROGRESS=true
 ## 八、并发模型总结
 
 ```
-扫描阶段     → 单线程 BFS + 分页 API
-读取阶段     → READ_WORKERS 并行，全局 4 req/s 限速
-分类阶段     → CLASSIFY_WORKERS 并行，实际 LLM 并发 ≤ 2，1.2 req/s
-复制/打标阶段 → 严格串行（避免飞书 wiki 写冲突）
+扫描阶段       → 单线程 BFS + 分页 API
+读取阶段       → READ_WORKERS 并行，全局 4 req/s 限速
+分类阶段       → CLASSIFY_WORKERS 并行，实际 LLM 并发 ≤ 2，1.2 req/s
+复制/打标阶段   → 严格串行（避免飞书 wiki 写冲突）
+多人协调       → SHARED_STATE_DB 原子 claim + obj_token 去重
+统计验证       → 处理前后各扫描一次 TARGET_PARENT_TOKEN
 ```
 
-读和算阶段最大化吞吐，写阶段保证飞书 API 操作稳定性。
+读和算阶段最大化吞吐，写阶段保证飞书 API 操作稳定性；共享库保证多人不会重复复制同一文档。
 
 ---
 
-## 九、流程框图
+## 九、多人并行协作
+
+### 9.1 分工方式
+
+```
+同事 A ── SCAN_ROOT_A ──┐
+同事 B ── SCAN_ROOT_B ──┼──► 同一 TARGET_PARENT_TOKEN
+同事 C ── SCAN_ROOT_C ──┘         ▲
+                                  │
+                         SHARED_STATE_DB（共享去重）
+```
+
+- 源目录**并列**即可，不要求互不包含
+- 同一 `obj_token` 无论出现在哪个源目录，只会复制一次
+- 各人的 `processing_progress.json` 保留在本地，仅记录本机已处理的 `node_token`
+
+### 9.2 共享文件夹设置（Windows 示例）
+
+1. 在主机创建 `F:\shared_db` 并开启文件夹共享（同事需**修改**权限）
+2. 主机 `.env`：`SHARED_STATE_DB=F:\shared_db\shared_copy_state.db`
+3. 同事 `.env`：`SHARED_STATE_DB=\\主机名\shared_db\shared_copy_state.db`
+4. 同事先执行 `dir \\主机名\shared_db` 验证可读写
+
+### 9.3 飞书应用是否必须相同
+
+**不必。** 不同 `FEISHU_APP_ID` 也可并行，但须满足：
+
+- 同一飞书租户（企业）
+- 各应用均具备知识库与文档读写权限
+- 应用可访问同一 `SPACE_ID` 与目标目录
+
+不同应用还有助于分摊 API 限流配额。
+
+### 9.4 统计对账
+
+全部 worker 完成后：
+
+- 各 worker「本次新复制」之和 ≈ 目标目录总净增（若开始时目标为空）
+- 任一 worker 结束时的「目标目录实际叶子文档数」为**全量**计数（含其他人已写入的文档）
+- 以**最后一次**全量扫描结果为准
+
+---
+
+## 十、流程框图
 
 > 以下框图使用 Mermaid 语法，可在 VS Code、GitHub、Typora 等支持 Mermaid 的编辑器中渲染。
 
-### 9.1 系统总览（启动 → 结束）
+### 10.1 系统总览（启动 → 结束）
 
 ```mermaid
 flowchart TB
@@ -325,6 +437,10 @@ flowchart TB
         A2 -->|否| A4
         A3 --> A4[TokenManager 获取 tenant_access_token<br/>每 30 分钟自动刷新]
         A4 --> A5[初始化组件<br/>Reader / Classifier / Creator / Checker / TagAdder]
+        A5 --> A5B{ENABLE_SHARED_DEDUP?}
+        A5B -->|是| A5C[SharedCopyState 连接 SHARED_STATE_DB]
+        A5B -->|否| A6
+        A5C --> A6
     end
 
     subgraph RESOLVE["阶段 1：解析目录"]
@@ -332,7 +448,8 @@ flowchart TB
         B2[解析复制目标<br/>TARGET_PARENT_TOKEN / TARGET_ROOT_NAME / FALLBACK]
         B1 --> B3{scan_root_token 存在?}
         B3 -->|否| B3E[❌ 退出]
-        B3 -->|是| B4[target_root_token<br/>未找到则用知识库根]
+        B3 -->|是| B2
+        B2 --> B2A[扫描目标目录 baseline<br/>target_count_before]
     end
 
     subgraph SCAN["阶段 2：扫描"]
@@ -348,12 +465,13 @@ flowchart TB
         D1 --> D2{FORCE_RESCAN<br/>或 scan_root 变更?}
         D2 -->|是| D3[processed_tokens = 空集]
         D2 -->|否| D4[从 processing_progress.json 恢复]
-        D3 --> D5[过滤 pending_docs<br/>排除已处理 node_token]
+        D3 --> D5[过滤 pending_docs<br/>排除已处理 node_token<br/>排除共享库已复制 obj_token]
         D4 --> D5
+        D5 --> D5A[按 obj_token 分组去重]
     end
 
     subgraph BATCH["阶段 4：批量读 + 分类"]
-        E1[ThreadPool 并行读取<br/>READ_WORKERS + 飞书 4 req/s 限速]
+        E1[ThreadPool 并行读取唯一 obj_token<br/>READ_WORKERS + 飞书 4 req/s 限速]
         E2[ThreadPool 并行分类<br/>CLASSIFY_WORKERS + LLM 并发≤2]
         E1 --> E2
     end
@@ -362,28 +480,31 @@ flowchart TB
         F1[逐篇遍历 read_results]
         F2{正文为空?}
         F3{分类成功?}
-        F4[创建文件夹链 + 复制 + 可选打标]
         F1 --> F2
         F2 -->|是| F2S[⏭️ 跳过]
         F2 -->|否| F3
         F3 -->|否| F3F[❌ 失败计数]
-        F3 -->|是| F4
-        F4 --> F5{复制成功?}
-        F5 -->|是| F6[写入 processed_tokens<br/>每 5 篇保存进度]
-        F5 -->|否| F3F
+        F3 -->|是| F4[try_claim obj_token]
+        F4 --> F4A{占位成功?}
+        F4A -->|否| F4S[⏭️ 并发占用跳过]
+        F4A -->|是| F4B[文件夹链 + 唯一标题复制 + 可选打标]
+        F4B --> F5{复制成功?}
+        F5 -->|是| F6[mark_copied + processed_tokens<br/>每 5 篇保存进度]
+        F5 -->|否| F5R[release_claim → 失败计数]
     end
 
     subgraph END["阶段 6：收尾"]
-        G1[打印统计信息]
+        G0[扫描目标目录 target_count_after]
+        G1[打印统计<br/>成功处理 = 目标目录实际叶子文档数]
         G2[save_processing_progress 最终保存]
         G3([结束])
-        G1 --> G2 --> G3
+        G0 --> G1 --> G2 --> G3
     end
 
     INIT --> RESOLVE --> SCAN --> PROGRESS --> BATCH --> SERIAL --> END
 ```
 
-### 9.2 Wiki 扫描阶段（叶子节点过滤）
+### 10.2 Wiki 扫描阶段（叶子节点过滤）
 
 ```mermaid
 flowchart TD
@@ -422,7 +543,7 @@ flowchart TD
     S5D --> S19[返回叶子 docx 列表]
 ```
 
-### 9.3 并行读取阶段
+### 10.3 并行读取阶段
 
 ```mermaid
 flowchart TD
@@ -448,7 +569,7 @@ flowchart TD
     R11 --> R14([返回 read_results])
 ```
 
-### 9.4 并行 AI 分类阶段
+### 10.4 并行 AI 分类阶段
 
 ```mermaid
 flowchart TD
@@ -483,7 +604,7 @@ flowchart TD
     CLASSIFY_ONE --> C21([返回 classify_results])
 ```
 
-### 9.5 串行复制与打标阶段
+### 10.5 串行复制与打标阶段
 
 ```mermaid
 flowchart TD
@@ -493,29 +614,32 @@ flowchart TD
     P2 -->|1 级| P3A[目标根 → tag1 文件夹]
     P2 -->|2 级| P3B[目标根 → tag1 → tag2]
     P2 -->|3 级| P3C[目标根 → tag1 → tag2 → tag3]
-    P2 -->|异常| P2E[❌ 返回 False]
+    P2 -->|异常| P2E[❌ 返回 None]
 
-    subgraph ENSURE["文件夹 _ensure_child_folder"]
+    subgraph ENSURE["文件夹 _ensure_child_folder（含并发重试）"]
         E1[check_duplicate 查同名子节点]
         E1 --> E2{已存在?}
         E2 -->|是| E3[复用已有 node_token]
         E2 -->|否| E4[create_lark_node 创建新文件夹]
+        E4 --> E5{创建成功?}
+        E5 -->|否| E1
     end
 
     P3A --> ENSURE
     P3B --> ENSURE
     P3C --> ENSURE
 
-    ENSURE --> P4[FeishuWikiCopier 复制文档]
+    ENSURE --> P3D[resolve_unique_child_title<br/>避免同名覆盖]
+    P3D --> P4[FeishuWikiCopier 复制文档]
     P4 --> P5{复制成功?}
-    P5 -->|否| P5F[❌ 返回 False]
+    P5 -->|否| P5F[❌ 返回 None]
     P5 -->|是| P6{ENABLE_TAG_ADD?}
-    P6 -->|否| P7[✅ 返回 True]
+    P6 -->|否| P7[✅ 返回 copied_node_token]
     P6 -->|是| P8[add_tag_block 原文档打标]
     P8 --> P7
 ```
 
-### 9.6 配置解析与断点续跑决策
+### 10.6 配置解析与断点续跑决策
 
 ```mermaid
 flowchart LR
@@ -546,9 +670,14 @@ flowchart LR
         RP5 -->|否| RP6[清空进度]
         RP5 -->|是| RP7[加载 processed_tokens]
     end
+    subgraph DEDUP["全局去重（多人并行）"]
+        DD1{ENABLE_SHARED_DEDUP?}
+        DD1 -->|是| DD2[跳过 SHARED_STATE_DB 已复制 obj_token]
+        DD1 -->|否| DD3[仅本地 progress 过滤]
+    end
 ```
 
-### 9.7 数据流与缓存层
+### 10.7 数据流与缓存层
 
 ```mermaid
 flowchart LR
@@ -564,8 +693,9 @@ flowchart LR
         TAGS["classify_results"]
     end
 
-    subgraph PERSIST["持久化（本地）"]
-        PP["processing_progress.json"]
+    subgraph PERSIST["持久化"]
+        PP["processing_progress.json<br/>（本机）"]
+        SS["shared_copy_state.db<br/>（共享盘，多人）"]
         CC["classify_cache.db"]
         WS["wiki_scan_cache.db"]
         LOG["logs/latest.log"]
@@ -574,6 +704,7 @@ flowchart LR
     ENV --> DOCS
     WIKI --> DOCS
     WS -.-> DOCS
+    SS -.-> DOCS
     DOCS --> READ
     WIKI --> READ
     PP -.-> DOCS
@@ -582,13 +713,15 @@ flowchart LR
     LLM --> TAGS
     TAGS --> WIKI
     TAGS --> PP
+    TAGS --> SS
 ```
 
-### 9.8 单篇文档端到端时序
+### 10.8 单篇文档端到端时序
 
 ```mermaid
 sequenceDiagram
     participant M as main.py
+    participant SS as SharedCopyState
     participant S as WikiScanner
     participant R as DocumentReader
     participant C as QwenClassifier
@@ -596,11 +729,12 @@ sequenceDiagram
     participant CP as WikiCopier
     participant T as TagAdder
 
+    M->>S: scan_space(TARGET) 统计 baseline
     M->>S: scan_space(SCAN_ROOT_TOKEN)
-    S->>S: BFS 遍历，仅收集叶子 docx
     S-->>M: 叶子 docx 列表
 
-    M->>M: 过滤 processing_progress 已处理项
+    M->>M: 过滤 progress + 共享库已复制 obj_token
+    M->>M: 按 obj_token 分组去重
 
     par 并行读取
         M->>R: get_raw_content(obj_token)
@@ -617,18 +751,26 @@ sequenceDiagram
     end
 
     loop 串行处理每篇
-        M->>F: 创建 tag1→tag2→tag3 文件夹链
-        M->>CP: copy_document
-        opt ENABLE_TAG_ADD
-            M->>T: add_tag_block(原文档)
+        M->>SS: try_claim(obj_token)
+        alt 占位失败或已复制
+            M->>M: 跳过
+        else 占位成功
+            M->>F: 创建 tag1→tag2→tag3 文件夹链
+            M->>CP: copy_document（唯一标题）
+            M->>SS: mark_copied / release_claim
+            opt ENABLE_TAG_ADD
+                M->>T: add_tag_block(原文档)
+            end
         end
         M->>M: 保存进度
     end
+
+    M->>S: scan_space(TARGET) 验证 target_count_after
 ```
 
 ---
 
-## 十、附录：跳过/失败分支汇总
+## 十一、附录：跳过/失败分支汇总
 
 ```mermaid
 flowchart TD
@@ -636,7 +778,10 @@ flowchart TD
         SK1[非叶子 docx<br/>has_child=true]
         SK2[正文空白]
         SK3[已在 processing_progress.json]
-        SK4[MAX_DOCUMENTS 截断后的文档]
+        SK4[共享库已复制 obj_token<br/>全局去重]
+        SK5[try_claim 失败<br/>其他 worker 正在处理]
+        SK6[同一扫描内重复 obj_token]
+        SK7[MAX_DOCUMENTS 截断后的文档]
     end
 
     subgraph FAIL["❌ 失败计数"]
@@ -672,4 +817,4 @@ copy .env.example .env
 
 ---
 
-*文档对应代码仓库：AI_DocClassifier（master 分支，含叶子节点扫描逻辑）*
+*文档对应代码仓库：AI_DocClassifier（`feature/multi-worker-parallel` 分支，含多人并行与共享去重）*

@@ -1,73 +1,29 @@
 # AI DocClassifier
 
-Automatically scan Feishu wiki documents, classify them with an LLM (Qwen), and copy each document into a folder hierarchy that matches the classification tags.
+飞书知识库文档自动分类工具：扫描指定目录下的叶子文档，用 LLM 按标签树分类，并复制到目标目录的分类文件夹中。
 
-Originally based on code from LinKin Wang; optimized by Hydrew Wang with parallel processing, SQLite caching, and rate limiting.
+支持**多人并行**处理不同源目录，通过共享去重库避免重复复制，结束时以目标目录实际扫描结果作为统计口径。
 
-## Project layout
+详细说明见 [docs/AI_DocClassifier说明文档.md](docs/AI_DocClassifier说明文档.md)。
 
-| File | Purpose |
-|------|---------|
-| `main.py` | Entry point and orchestration pipeline |
-| `config.py` | Settings loaded from environment / `.env` |
-| `token_manager.py` | Feishu tenant access token refresh |
-| `wiki_scanner.py` | Scan wiki nodes under a folder |
-| `read_feishu_doc.py` | Read document raw content (rate-limited) |
-| `qwen_classifier.py` | LLM classification against a label tree |
-| `classify_cache.py` | SQLite cache for classification results |
-| `feishu_title_check.py` | Folder lookup and duplicate checks |
-| `create_feishu_node.py` | Create wiki folder nodes |
-| `copy_doc.py` | Copy documents into target folders |
-| `add_tag_block.py` | Insert classification tag block in source doc |
-| `feishu_rate_limit.py` | Global Feishu API rate limiter |
-| `llm_rate_limit.py` | Global LLM concurrency / rate limiter |
-| `run_logging.py` | Mirror stdout/stderr to `logs/` |
+## 快速开始
 
-## Setup
-
-```bash
+```powershell
 python -m venv .venv
-.venv\Scripts\activate          # Windows
+.venv\Scripts\activate
 pip install -r requirements.txt
-copy .env.example .env            # then edit .env with your values
-```
-
-Required environment variables:
-
-- `FEISHU_APP_ID`, `FEISHU_APP_SECRET` — Feishu app credentials
-- `SPACE_ID` — wiki space ID
-- `SCAN_ROOT_TOKEN` or `SCAN_FOLDER_NAME` — source folder to scan
-- `TARGET_PARENT_TOKEN` or `TARGET_ROOT_NAME` — destination root for copies
-- `QWEN_API_KEY` — LLM API key
-
-## Run
-
-```bash
+copy .env.example .env
+# 编辑 .env 填入飞书与 LLM 配置
 python main.py
 ```
 
-Logs are written to `logs/latest.log` and `logs/run_YYYYMMDD_HHMMSS.log` when `SAVE_RUN_LOG=true` (default).
+## 主要能力
 
-## Pipeline
+- 仅处理叶子 `docx`（跳过目录/索引页）
+- 并行读取与 AI 分类，串行复制到飞书
+- 断点续跑（`processing_progress.json`）
+- 多人并行去重（`SHARED_STATE_DB` + `obj_token`）
 
-1. **Scan** — list documents under the configured source folder
-2. **Read** — fetch document bodies in parallel (`READ_WORKERS`, Feishu rate-limited)
-3. **Classify** — LLM assigns 1–3 level tags in parallel (`CLASSIFY_WORKERS`)
-4. **Copy / tag** — create folder path, copy document, optionally add tag block (serial)
+## 当前分支
 
-Documents with empty body text are skipped. Progress is saved to `processing_progress.json` when `SAVE_PROGRESS=true`.
-
-## Tuning
-
-If you see Feishu HTTP 400 with code `99991400` (rate limit), lower `READ_WORKERS` (default 3).
-
-If the LLM gateway returns 502/503, lower `CLASSIFY_WORKERS` or adjust limits in `llm_rate_limit.py`.
-
-Classification results are cached in `classify_cache.db`; set `USE_CLASSIFY_CACHE=false` to force re-classification.
-
-## Generated / ignored files
-
-- `classify_cache.db` — classification cache
-- `wiki_scan_cache.db` — scan cache (when `USE_CACHE=true`)
-- `processing_progress.json` — resume checkpoint
-- `logs/` — run logs
+大版本改动在 `feature/multi-worker-parallel` 分支，尚未合入 `master`。
