@@ -43,11 +43,25 @@ class SimpleWikiScanner:
         }
 
         if self.enable_db_cache:
-            self._init_database()
+            try:
+                self._init_database()
+            except sqlite3.OperationalError as exc:
+                self.enable_db_cache = False
+                logger.warning("无法初始化 wiki_scan_cache.db，已禁用扫描缓存: %s", exc)
+
+    def _disable_cache_writes(self, exc: Exception) -> None:
+        """缓存不可写时降级为无缓存扫描，避免中断主流程。"""
+        if not self._use_cache:
+            return
+        self._use_cache = False
+        logger.warning("扫描缓存写入失败，本次运行不再写入 wiki_scan_cache.db: %s", exc)
+
+    def _connect_db(self) -> sqlite3.Connection:
+        return sqlite3.connect(self.db_path, timeout=30)
     
     def _init_database(self):
         """初始化数据库"""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._connect_db()
         cursor = conn.cursor()
         
         cursor.execute("""
@@ -364,65 +378,75 @@ class SimpleWikiScanner:
         if not node.get("node_token"):
             return
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            INSERT OR REPLACE INTO node_cache 
-            (node_token, parent_token, title, obj_type, has_child, node_type, scan_time)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-            node.get("node_token"),
-            node.get("parent_node_token"),
-            node.get("title", ""),
-            node.get("obj_type", ""),
-            1 if node.get("has_child") else 0,
-            node.get("node_type", ""),
-            datetime.now()
-        ))
-        
-        conn.commit()
-        conn.close()
+        try:
+            conn = self._connect_db()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                INSERT OR REPLACE INTO node_cache 
+                (node_token, parent_token, title, obj_type, has_child, node_type, scan_time)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                node.get("node_token"),
+                node.get("parent_node_token"),
+                node.get("title", ""),
+                node.get("obj_type", ""),
+                1 if node.get("has_child") else 0,
+                node.get("node_type", ""),
+                datetime.now()
+            ))
+            
+            conn.commit()
+            conn.close()
+        except sqlite3.OperationalError as exc:
+            self._disable_cache_writes(exc)
     
     def _save_progress(self, space_id: str, scan_root: str, scanned_nodes: Set, pending_nodes: deque, documents: List):
         """保存进度"""
         if not self._use_cache:
             return
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            INSERT OR REPLACE INTO scan_progress 
-            (id, space_id, scan_root, last_scan_time, scanned_nodes, pending_nodes)
-            VALUES (1, ?, ?, ?, ?, ?)
-        """, (
-            space_id,
-            scan_root,
-            datetime.now(),
-            json.dumps(list(scanned_nodes)),
-            json.dumps([None if x is None else x for x in pending_nodes])
-        ))
-        
-        conn.commit()
-        conn.close()
-        
-        with open(f"scanned_documents_{scan_root}.json", "w", encoding="utf-8") as f:
-            json.dump(documents, f, ensure_ascii=False, indent=2)
+        try:
+            conn = self._connect_db()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                INSERT OR REPLACE INTO scan_progress 
+                (id, space_id, scan_root, last_scan_time, scanned_nodes, pending_nodes)
+                VALUES (1, ?, ?, ?, ?, ?)
+            """, (
+                space_id,
+                scan_root,
+                datetime.now(),
+                json.dumps(list(scanned_nodes)),
+                json.dumps([None if x is None else x for x in pending_nodes])
+            ))
+            
+            conn.commit()
+            conn.close()
+            
+            with open(f"scanned_documents_{scan_root}.json", "w", encoding="utf-8") as f:
+                json.dump(documents, f, ensure_ascii=False, indent=2)
+        except (sqlite3.OperationalError, OSError) as exc:
+            self._disable_cache_writes(exc)
     
     def _load_progress(self, space_id: str, scan_root: str) -> tuple:
         """加载进度"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT scanned_nodes, pending_nodes FROM scan_progress 
-            WHERE space_id = ? AND scan_root = ? 
-            ORDER BY last_scan_time DESC LIMIT 1
-        """, (space_id, scan_root))
-        
-        row = cursor.fetchone()
-        conn.close()
+        try:
+            conn = self._connect_db()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT scanned_nodes, pending_nodes FROM scan_progress 
+                WHERE space_id = ? AND scan_root = ? 
+                ORDER BY last_scan_time DESC LIMIT 1
+            """, (space_id, scan_root))
+            
+            row = cursor.fetchone()
+            conn.close()
+        except sqlite3.OperationalError as exc:
+            self._disable_cache_writes(exc)
+            return [], set(), deque()
         
         if row:
             scanned_nodes = set(json.loads(row[0]))
