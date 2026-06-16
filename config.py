@@ -75,6 +75,12 @@ PROGRESS_INTERVAL = _env_int("PROGRESS_INTERVAL", 10)
 # LLM credentials
 QWEN_API_KEY = _env("QWEN_API_KEY", "")
 
+# Multi-worker parallel processing (shared folder on network drive recommended)
+ENABLE_SHARED_DEDUP = _env_bool("ENABLE_SHARED_DEDUP", True)
+SHARED_STATE_DB = _env("SHARED_STATE_DB") or "shared_copy_state.db"
+WORKER_ID = _env("WORKER_ID")
+CLAIM_TIMEOUT_MINUTES = _env_int("CLAIM_TIMEOUT_MINUTES", 30)
+
 
 def validate() -> None:
     """Raise ValueError when required settings are missing."""

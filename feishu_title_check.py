@@ -99,4 +99,24 @@ class FolderNameChecker:
             "all_titles": all_titles,
         }
 
+    def resolve_unique_child_title(
+        self,
+        space_id: str,
+        parent_node_token: Optional[str],
+        desired_title: str,
+        *,
+        max_attempts: int = 50,
+    ) -> str:
+        """Return a title that does not collide with existing direct children."""
+        children = self.list_children(space_id, parent_node_token)
+        if desired_title not in children:
+            return desired_title
+
+        base = desired_title.strip() or "未命名文档"
+        for i in range(2, max_attempts + 2):
+            candidate = f"{base} ({i})"
+            if candidate not in children:
+                return candidate
+        return f"{base} ({desired_title[-6:]})"
+
 

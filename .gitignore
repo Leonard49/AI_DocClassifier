@@ -5,6 +5,7 @@ __pycache__/
 classify_cache.db
 wiki_scan_cache.db
 processing_progress.json
+shared_copy_state.db
 logs/
 run.log
 !logs/.gitkeep

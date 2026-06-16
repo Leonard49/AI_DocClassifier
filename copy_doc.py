@@ -117,8 +117,8 @@ class FeishuWikiCopier:
             print(f"ERROR: copying file: {e}", file=sys.stderr)
             raise
 
-    def copy_document_by_node_token(self) -> bool:
-        """通过节点token复制文档的主流程"""
+    def copy_document_by_node_token(self) -> Optional[str]:
+        """通过节点token复制文档的主流程，成功时返回新节点的 node_token。"""
         try:
             # 1. 获取 tenant_access_token
             print("步骤1: 获取 tenant_access_token")
@@ -133,15 +133,15 @@ class FeishuWikiCopier:
             doc_type = node_info.get("obj_type")
             if not doc_token:
                 print("ERROR: 未获取到文档 token", file=sys.stderr)
-                return False
+                return None
             if not doc_type:
                 print("ERROR: 未获取到文档类型", file=sys.stderr)
-                return False
+                return None
             print(f"获取到文档信息 - token: {doc_token}, type: {doc_type}")
 
             # 4. 复制文档
             print("步骤3: 复制文档")
-            self._copy_file(
+            result = self._copy_file(
                 tenant_access_token=tenant_access_token,
                 current_space_id=self.source_space_id,
                 target_space_id=self.target_space_id,
@@ -149,9 +149,11 @@ class FeishuWikiCopier:
                 target_parent_token=self.target_folder_token,
                 title=self.new_file_name,
             )
+            copied_node = result.get("data", {}).get("node", {})
+            copied_token = copied_node.get("node_token")
             print("文档复制完成!")
-            return True
+            return copied_token
 
         except Exception as e:
             print(f"ERROR: 复制文档过程中发生错误: {e}", file=sys.stderr)
-            return False
+            return None
