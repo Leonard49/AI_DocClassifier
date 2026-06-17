@@ -20,6 +20,7 @@
 10. [性能与限流](#十性能与限流)
 11. [常见问题与排障](#十一常见问题与排障)
 12. [快速启动](#十二快速启动)
+13. [附录：各阶段逻辑图](#附录各阶段逻辑图)
 
 ---
 
@@ -470,19 +471,380 @@ git pull origin feature/multi-worker-parallel
 
 ---
 
-## 附录：流程简图
+## 附录：各阶段逻辑图
+
+> 使用 Mermaid 语法，可在 VS Code、GitHub、Typora 等编辑器中渲染。
+
+### A.1 系统总览（阶段串联）
 
 ```mermaid
 flowchart TB
-    START([main.py]) --> CFG[config.validate + 初始化]
-    CFG --> BASE[扫描目标目录 baseline]
-    BASE --> SCAN[BFS 扫描源目录叶子 docx]
-    SCAN --> FILTER[progress + 共享库 + obj_token 去重]
-    FILTER --> READ[并行读取 READ_WORKERS]
-    READ --> CLS[并行分类 LLM 并发≤2]
-    CLS --> COPY[串行：claim → 建文件夹 → 复制 → mark_copied]
-    COPY --> VERIFY[扫描目标目录 after]
-    VERIFY --> END([输出统计])
+    subgraph P0["阶段 0：启动"]
+        A0([main.py]) --> A1{config.validate}
+        A1 -->|失败| A1E[退出]
+        A1 -->|通过| A2[TokenManager + 组件初始化]
+        A2 --> A3{ENABLE_SHARED_DEDUP?}
+        A3 -->|是| A4[SharedCopyState 连接 SHARED_STATE_DB]
+        A3 -->|否| A5
+        A4 --> A5[解析 SCAN_ROOT / TARGET_PARENT]
+    end
+
+    subgraph P1["阶段 1：基线"]
+        B1[扫描 TARGET_PARENT_TOKEN] --> B2[target_count_before]
+    end
+
+    subgraph P2["阶段 2：扫描源"]
+        C1[BFS 扫描 SCAN_ROOT_TOKEN] --> C2[all_documents 叶子 docx 列表]
+    end
+
+    subgraph P3["阶段 3：过滤"]
+        D1[progress + 共享库 + obj_token 去重] --> D2[pending / unique_docs]
+    end
+
+    subgraph P4["阶段 4：读与分类"]
+        E1[并行读取 READ_WORKERS] --> E2[并行分类 CLASSIFY_WORKERS]
+    end
+
+    subgraph P5["阶段 5：写回"]
+        F1[串行 claim → 复制 → mark_copied] --> F2[可选打标 + 保存 progress]
+    end
+
+    subgraph P6["阶段 6：验证"]
+        G1[扫描 TARGET_PARENT_TOKEN] --> G2[target_count_after + 统计输出]
+    end
+
+    P0 --> P1 --> P2 --> P3 --> P4 --> P5 --> P6
+```
+
+---
+
+### A.2 阶段 0：启动与初始化
+
+```mermaid
+flowchart TD
+    S0([运行 main.py]) --> S1{SAVE_RUN_LOG?}
+    S1 -->|是| S2[setup_run_log → logs/]
+    S1 -->|否| S3
+    S2 --> S3[config.validate 检查必填项]
+    S3 -->|缺失| S3E[❌ 打印错误并退出]
+    S3 -->|通过| S4[TokenManager.get_token 验证飞书凭证]
+
+    S4 -->|失败| S4E[❌ 退出]
+    S4 -->|成功| S5[初始化组件]
+    S5 --> S5A[FeishuDocumentReader]
+    S5 --> S5B[QwenTreeClassifier + ClassifyCache]
+    S5 --> S5C[FeishuNodeCreator / FolderNameChecker]
+    S5 --> S5D[FeishuDocumentTagAdder]
+
+    S5A --> S6{ENABLE_SHARED_DEDUP?}
+    S5B --> S6
+    S5C --> S6
+    S5D --> S6
+    S6 -->|是| S7[SharedCopyState<br/>网络路径用 DELETE 日志模式]
+    S6 -->|否| S8
+    S7 --> S8[解析 scan_root_token / target_root_token]
+    S8 --> S8A{scan_root 存在?}
+    S8A -->|否| S8E[❌ 退出]
+    S8A -->|是| S9([进入阶段 1])
+```
+
+---
+
+### A.3 阶段 1 & 2：目标基线 + 源目录扫描
+
+```mermaid
+flowchart TD
+    T0([阶段 1 开始]) --> T1[SimpleWikiScanner.scan_space<br/>root = TARGET_PARENT_TOKEN]
+    T1 --> T2[BFS 仅收集叶子 docx]
+    T2 --> T3[target_count_before = 文档数]
+
+    T3 --> T4([阶段 2 开始])
+    T4 --> T5[scan_space root = SCAN_ROOT_TOKEN]
+    T5 --> T6{USE_CACHE=true?}
+    T6 -->|是| T7[尝试从 wiki_scan_cache.db 恢复进度]
+    T6 -->|否| T8
+    T7 -->|写库失败| T7D[降级：禁用本次扫描缓存]
+    T7 --> T8[初始化 BFS 队列]
+
+    T8 --> T9{pending 队列非空?}
+    T9 -->|否| T9D([返回 all_documents])
+    T9 -->|是| T10[GET wiki/.../nodes 分页 page_size=50]
+
+    T10 --> T11{obj_type == docx?}
+    T11 -->|是| T12{has_child == false?}
+    T11 -->|否| T14
+    T12 -->|是| T13[✅ 加入 all_documents]
+    T12 -->|否| T12S[⏭️ 跳过非叶子 docx]
+    T13 --> T14
+    T12S --> T14
+
+    T14{has_child == true?}
+    T14 -->|是| T15[加入 pending 继续向下]
+    T14 -->|否| T16[sleep 0.1s 防限流]
+    T15 --> T16
+    T16 --> T9
+
+    T9D --> T17{MAX_DOCUMENTS > 0?}
+    T17 -->|是| T18[截取前 N 篇]
+    T17 -->|否| T19([进入阶段 3])
+    T18 --> T19
+```
+
+---
+
+### A.4 阶段 3：过滤、断点续跑与去重
+
+```mermaid
+flowchart TD
+    F0([阶段 3 开始]) --> F1[load_processing_progress]
+    F1 --> F2{FORCE_RESCAN?}
+    F2 -->|是| F3[processed_tokens = 空]
+    F2 -->|否| F4{scan_root 与 .env 一致?}
+    F4 -->|否| F3
+    F4 -->|是| F5[从 processing_progress.json 恢复]
+
+    F3 --> F6[遍历 all_documents]
+    F5 --> F6
+
+    F6 --> F7{node_token 在 progress?}
+    F7 -->|是| F7S[⏭️ local_resume_skip]
+    F7 -->|否| F8{obj_token 在 shared_copy_state<br/>status=copied?}
+    F8 -->|是| F8S[⏭️ duplicate_skip<br/>写入 progress]
+    F8 -->|否| F9[加入 pending_docs]
+
+    F7S --> F6
+    F8S --> F6
+    F9 --> F6
+
+    F6 -->|遍历完成| F10[group_docs_by_obj_token]
+    F10 --> F11[unique_docs = 每组取 1 个代表]
+    F11 --> F12{pending 数 > unique 数?}
+    F12 -->|是| F12S[⏭️ intra_scan_dedup 计数]
+    F12 --> F12N
+    F12S --> F12N
+    F12 -->|否| F12N([进入阶段 4<br/>待处理 unique_docs])
+```
+
+---
+
+### A.5 阶段 4a：并行读取正文
+
+```mermaid
+flowchart TD
+    R0([batch_read_contents]) --> R1[ThreadPoolExecutor<br/>workers = READ_WORKERS]
+    R1 --> R2[对每个 unique_doc 提交 _read_one]
+
+    subgraph READ_ONE["单文档读取 _read_one"]
+        R3[取 obj_token / node_token / title]
+        R3 --> R4[DOCX_READ_LIMITER.wait<br/>全局 4 req/s]
+        R4 --> R5[GET docx/.../raw_content]
+        R5 --> R6{code == 0?}
+        R6 -->|是| R6O{正文非空?}
+        R6O -->|是| R7[✅ 写入 read_results]
+        R6O -->|否| R7E[content = None]
+        R6 -->|99991400| R8[指数退避重试 最多 5 次]
+        R8 --> R5
+        R6 -->|其他错误| R9[尝试 wiki get_node 解析 obj_token]
+        R9 --> R5
+    end
+
+    R2 --> READ_ONE
+    READ_ONE --> R10[read_results<br/>obj_token → title, content]
+    R10 --> R11([进入阶段 4b])
+```
+
+---
+
+### A.6 阶段 4b：并行 AI 分类
+
+```mermaid
+flowchart TD
+    C0([batch_classify_documents]) --> C1[遍历 read_results]
+
+    C1 --> C2{has_body_content?}
+    C2 -->|否| C2S[tag = None<br/>empty_content_skip]
+    C2 -->|是| C3[加入 to_classify 队列]
+
+    C2S --> C1
+    C3 --> C1
+    C1 -->|队列就绪| C4[ThreadPoolExecutor<br/>workers = CLASSIFY_WORKERS]
+
+    subgraph CLASSIFY_ONE["单文档 classify"]
+        C5{USE_CLASSIFY_CACHE<br/>且 hash 命中?}
+        C5 -->|是| C5H[返回缓存 tag]
+        C5 -->|否| C6[LLM_CONCURRENCY 获取信号量<br/>并发 ≤ 2]
+        C6 --> C7[LLM_RATE_LIMITER.wait<br/>1.2 req/s]
+        C7 --> C8[POST Qwen API<br/>正文前 CLASSIFY_MAX_CHARS 字符]
+        C8 --> C9{成功?}
+        C9 -->|429/5xx| C10[指数退避重试]
+        C10 --> C8
+        C9 -->|是| C11[解析路径 → tag1/tag2/tag3 JSON]
+        C11 --> C12{路径在 LABEL_TREE?}
+        C12 -->|否| C13[回退 Others]
+        C12 -->|是| C14[写入 classify_cache.db]
+        C9 -->|不可重试| C9F[tag = None]
+    end
+
+    C4 --> CLASSIFY_ONE
+    CLASSIFY_ONE --> C20[classify_results<br/>obj_token → tag]
+    C20 --> C21([进入阶段 5])
+```
+
+---
+
+### A.7 阶段 5：串行复制与打标
+
+```mermaid
+flowchart TD
+    P0([逐篇遍历 read_results]) --> P1{正文为空?}
+    P1 -->|是| P1S[⏭️ skip<br/>update progress]
+    P1 -->|否| P2{分类 tag 存在?}
+    P2 -->|否| P2F[❌ fail_count++]
+    P2 -->|是| P3{shared_state.is_copied?}
+    P3 -->|是| P3S[⏭️ duplicate_skip]
+    P3 -->|否| P4{try_claim obj_token?}
+
+    P4 -->|否| P4S[⏭️ claim_busy_skip<br/>其他 worker 占用]
+    P4 -->|是| P5[process_single_document]
+
+    subgraph COPY_FLOW["复制子流程"]
+        P6{tag 层级 1/2/3?}
+        P6 --> P7[_ensure_child_folder 链<br/>含并发创建重试]
+        P7 --> P8[resolve_unique_child_title<br/>避免同名覆盖]
+        P8 --> P9[FeishuWikiCopier.copy<br/>wiki copy API]
+        P9 --> P10{复制成功?}
+        P10 -->|是| P11{ENABLE_TAG_ADD?}
+        P11 -->|是| P12[add_tag_block 原文档]
+        P11 -->|否| P13
+        P12 --> P13[返回 copied_node_token]
+        P10 -->|否| P10F[release_claim]
+    end
+
+    P5 --> COPY_FLOW
+    COPY_FLOW -->|成功| P14[mark_copied → shared_state<br/>失败只告警]
+    P14 --> P15[processed_tokens += node_tokens<br/>new_copy_count++]
+    P15 --> P16{每 5 篇?}
+    P16 -->|是| P17[save_processing_progress]
+    P16 -->|否| P18
+    P17 --> P18{还有下一篇?}
+    P10F --> P18
+    P2F --> P18
+    P1S --> P18
+    P3S --> P18
+    P4S --> P18
+    P18 -->|是| P0
+    P18 -->|否| P19([进入阶段 6])
+```
+
+---
+
+### A.8 阶段 6：验证统计与输出
+
+```mermaid
+flowchart TD
+    V0([阶段 6 开始]) --> V1[scan_space TARGET_PARENT_TOKEN]
+    V1 --> V2[target_count_after = 叶子 docx 数]
+    V2 --> V3[target_net_gain = after - before]
+
+    V3 --> V4[打印统计信息]
+    V4 --> V4A[成功处理 = target_count_after]
+    V4 --> V4B[本次净增 / 本次新复制]
+    V4 --> V4C[失败 / 跳过明细]
+    V4 --> V4D[共享库 total_copied / worker_copied]
+
+    V4A --> V5[save_processing_progress 最终保存]
+    V4B --> V5
+    V4C --> V5
+    V4D --> V5
+    V5 --> V6([结束])
+```
+
+---
+
+### A.9 多人并行协调（SharedCopyState）
+
+```mermaid
+flowchart LR
+    subgraph W1["Worker A<br/>SCAN_ROOT_A"]
+        A1[扫描] --> A2[读取/分类]
+        A2 --> A3[try_claim]
+    end
+
+    subgraph W2["Worker B<br/>SCAN_ROOT_B"]
+        B1[扫描] --> B2[读取/分类]
+        B2 --> B3[try_claim]
+    end
+
+    subgraph DB["SHARED_STATE_DB<br/>copy_registry"]
+        D1[(obj_token PK)]
+        D2[status: claiming / copied]
+    end
+
+    subgraph TARGET["TARGET_PARENT_TOKEN"]
+        T1[tag1/tag2/tag3/文档...]
+    end
+
+    A3 <-->|原子 INSERT/UPDATE| DB
+    B3 <-->|原子 INSERT/UPDATE| DB
+    A3 -->|mark_copied 后| TARGET
+    B3 -->|mark_copied 后| TARGET
+
+    A2 -.->|is_copied 跳过| DB
+    B2 -.->|is_copied 跳过| DB
+```
+
+**协调规则：**
+
+- 同一 `obj_token` 只允许一条 `copied` 记录
+- `try_claim` 失败 → 其他 worker 正在处理，本 worker 跳过
+- `claiming` 超时（默认 30 分钟）→ 自动清理，允许重新抢占
+- 网络共享盘使用 `DELETE` 日志模式，损坏时自动重建
+
+---
+
+### A.10 持久化与缓存数据流
+
+```mermaid
+flowchart LR
+    subgraph INPUT["外部输入"]
+        ENV[".env"]
+        FEISHU["飞书 Wiki / Docx API"]
+        LLM["Qwen LiteLLM"]
+    end
+
+    subgraph RUNTIME["运行时"]
+        DOCS["all_documents"]
+        READ["read_results"]
+        TAGS["classify_results"]
+    end
+
+    subgraph LOCAL["本机持久化"]
+        PP["processing_progress.json<br/>键: node_token"]
+        CC["classify_cache.db<br/>键: obj_token + hash"]
+        WC["wiki_scan_cache.db<br/>USE_CACHE=true"]
+        LOG["logs/"]
+    end
+
+    subgraph SHARED["共享持久化"]
+        SS["shared_copy_state.db<br/>键: obj_token"]
+    end
+
+    ENV --> DOCS
+    FEISHU --> DOCS
+    WC -.->|可选恢复| DOCS
+    PP -.->|过滤已处理| DOCS
+    SS -.->|过滤已复制| DOCS
+
+    DOCS --> READ
+    FEISHU --> READ
+    READ --> TAGS
+    CC -.->|命中| TAGS
+    LLM --> TAGS
+
+    TAGS --> FEISHU
+    TAGS --> PP
+    TAGS --> SS
+    TAGS --> LOG
 ```
 
 ---
