@@ -251,16 +251,16 @@ SAVE_PROGRESS=true
 
 1. 克隆项目后，在项目根目录执行：
 
-   ```powershell
-   copy .env.example .env
-   ```
+    ```powershell
+    copy .env.example .env
+    ```
 
 2. 用编辑器打开 `.env`，填入真实值（**不要**提交到 Git）
 3. 验证配置：
 
-   ```powershell
-   .venv\Scripts\python.exe -c "import config; config.validate(); print('OK')"
-   ```
+    ```powershell
+    .venv\Scripts\python.exe -c "import config; config.validate(); print('OK')"
+    ```
 
 4. 密钥/token 通过团队文档或私下传递，不要写入 `.env.example`
 
@@ -339,7 +339,7 @@ flowchart TB
         C1[SimpleWikiScanner BFS 遍历<br/>仅收集叶子 docx]
         C1 --> C2{MAX_DOCUMENTS > 0?}
         C2 -->|是| C3[截取前 N 篇]
-        C2 -->|否| C4
+        C2 -->|否| C4[扫描结果就绪]
         C3 --> C4
     end
 
@@ -373,14 +373,19 @@ flowchart TB
         F5 -->|否| F3F
     end
 
-    subgraph END["阶段 6：收尾"]
+    subgraph FINISH["阶段 6：收尾"]
         G1[打印统计信息]
         G2[save_processing_progress 最终保存]
         G3([结束])
         G1 --> G2 --> G3
     end
 
-    INIT --> RESOLVE --> SCAN --> PROGRESS --> BATCH --> SERIAL --> END
+    A5 --> B1
+    B4 --> C1
+    C4 --> D1
+    D5 --> E1
+    E2 --> F1
+    F6 --> G1
 ```
 
 ### 9.2 Wiki 扫描阶段（叶子节点过滤）
@@ -391,8 +396,8 @@ flowchart TD
     S1 -->|否| S1E[返回空列表]
     S1 -->|是| S2{USE_CACHE=true?}
     S2 -->|是| S3[从 wiki_scan_cache.db 恢复<br/>scanned_nodes / pending_nodes / 文档列表]
-    S2 -->|否| S4
-    S3 --> S4[初始化 BFS 队列<br/>起点 = SCAN_ROOT_TOKEN]
+    S2 -->|否| S4[初始化 BFS 队列<br/>起点 = SCAN_ROOT_TOKEN]
+    S3 --> S4
 
     S4 --> S5{队列 pending_nodes<br/>非空?}
     S5 -->|否| S5D([扫描完成])
@@ -404,16 +409,16 @@ flowchart TD
     S8 --> S9{API 成功?}
     S9 -->|否| S9E[记录错误，继续下一节点]
     S9 -->|是| S10[遍历当前页每个 node]
+    S9E --> S16
 
     S10 --> S11{obj_type == docx?}
     S11 -->|是| S12{has_child == false?<br/>叶子节点}
-    S11 -->|否| S14
+    S11 -->|否| S14{has_child == true?}
     S12 -->|是| S13[✅ 加入 all_documents]
     S12 -->|否| S12S[⏭️ 跳过非叶子 docx<br/>目录/索引页]
 
     S13 --> S14
     S12S --> S14
-    S14{has_child == true?}
     S14 -->|是| S15[加入 pending_nodes<br/>继续向下遍历]
     S14 -->|否| S16
     S15 --> S16[标记 current_parent 已扫描<br/>sleep 0.1s 防限流]
@@ -443,8 +448,8 @@ flowchart TD
         R10 --> R6
     end
 
-    R3 --> READ_ONE
-    READ_ONE --> R11[写入 results<br/>obj_token → title, content]
+    R3 --> R4
+    R8 --> R11[写入 results<br/>obj_token → title, content]
     R11 --> R14([返回 read_results])
 ```
 
@@ -479,8 +484,10 @@ flowchart TD
         C11 -->|不可重试| C11F[返回 None]
     end
 
-    C5 --> CLASSIFY_ONE
-    CLASSIFY_ONE --> C21([返回 classify_results])
+    C5 --> C6
+    C6H --> C21([返回 classify_results])
+    C18 --> C21
+    C11F --> C21
 ```
 
 ### 9.5 串行复制与打标阶段
@@ -502,11 +509,12 @@ flowchart TD
         E2 -->|否| E4[create_lark_node 创建新文件夹]
     end
 
-    P3A --> ENSURE
-    P3B --> ENSURE
-    P3C --> ENSURE
+    P3A --> E1
+    P3B --> E1
+    P3C --> E1
 
-    ENSURE --> P4[FeishuWikiCopier 复制文档]
+    E3 --> P4[FeishuWikiCopier 复制文档]
+    E4 --> P4
     P4 --> P5{复制成功?}
     P5 -->|否| P5F[❌ 返回 False]
     P5 -->|是| P6{ENABLE_TAG_ADD?}
