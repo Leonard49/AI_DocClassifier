@@ -63,7 +63,7 @@ SAVE_RUN_LOG = _env_bool("SAVE_RUN_LOG", True)
 LOG_DIR = _env("LOG_DIR", "logs") or "logs"
 
 # Performance tuning
-READ_WORKERS = _env_int("READ_WORKERS", 3)
+READ_WORKERS = _env_int("READ_WORKERS", 2)
 CLASSIFY_WORKERS = _env_int("CLASSIFY_WORKERS", 4)
 CLASSIFY_MAX_CHARS = _env_int("CLASSIFY_MAX_CHARS", 3000)
 USE_CLASSIFY_CACHE = _env_bool("USE_CLASSIFY_CACHE", True)
