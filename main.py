@@ -823,7 +823,7 @@ def main():
             new_copy_count += 1
             processed_tokens.update(node_tokens)
             if shared_state:
-                shared_state.mark_copied(
+                if not shared_state.mark_copied(
                     obj_token,
                     title=doc_title,
                     source_node_token=node_token,
@@ -831,7 +831,11 @@ def main():
                     target_parent_token=target_root_token or "",
                     target_folder_token="",
                     scan_root=SCAN_ROOT_TOKEN,
-                )
+                ):
+                    print(
+                        "⚠️ 共享去重库写入失败（文档已复制成功，"
+                        "本地进度已保存，请检查 SHARED_STATE_DB）"
+                    )
         else:
             fail_count += 1
             if shared_state:
