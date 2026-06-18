@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 .env
+resource.txt
 classify_cache.db
 wiki_scan_cache.db
 processing_progress.json
