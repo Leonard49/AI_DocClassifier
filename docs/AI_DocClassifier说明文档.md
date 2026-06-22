@@ -31,7 +31,7 @@
 本系统自动整理飞书知识库文档：
 
 1. 在**源目录**（`SCAN_ROOT_TOKEN`）下 BFS 扫描**叶子 docx**（`has_child=false`）
-2. 读取正文，调用 **Qwen LLM** 按预定义标签树分类
+2. 读取正文，调用 **LLM**（经 OpenAI 兼容网关，默认 `deepseek-v4-flash`）按预定义标签树分类
 3. 在**目标目录**（`TARGET_PARENT_TOKEN`）下按分类创建文件夹并**复制**文档
 4. 可选：在**原文档**插入分类标签块（`ENABLE_TAG_ADD`）
 
@@ -63,7 +63,7 @@
 | Token | `token_manager.py` | 飞书 `tenant_access_token` 自动刷新 |
 | 扫描 | `wiki_scanner.py` | BFS 遍历 wiki，仅收集叶子 docx；可选扫描缓存 |
 | 读文档 | `read_feishu_doc.py` | 调用 docx API 获取正文；限流重试 |
-| 分类 | `qwen_classifier.py` | 标签树 + Qwen API 分类 |
+| 分类 | `llm_tree_classifier.py` | 标签树 + LLM 分类（`LLM_MODEL` 可配置） |
 | 分类缓存 | `classify_cache.py` | SQLite 缓存分类结果（按 `obj_token` + 内容 hash） |
 | **共享去重** | **`shared_state.py`** | 跨 worker 的 `obj_token` 复制注册表（SQLite） |
 | 文件夹 | `create_feishu_node.py` / `feishu_title_check.py` | 创建/查找文件夹；同名标题自动重命名 |
@@ -180,7 +180,7 @@
 | `SPACE_ID` | `FEISHU_APP_ID` / `FEISHU_APP_SECRET` |
 | `TARGET_PARENT_TOKEN` | `SCAN_ROOT_TOKEN` |
 | `SHARED_STATE_DB` 路径 | `WORKER_ID` |
-| 同一飞书租户 | `QWEN_API_KEY` |
+| 同一飞书租户 | `LLM_API_KEY` |
 
 **不同 App ID 的好处：** 飞书 API 限流按应用计频，多人用不同 App 可分摊读文档配额（约 5 req/s/App）。
 
@@ -228,7 +228,9 @@ READ_WORKERS=2
 |------|------|
 | `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | 飞书应用凭证 |
 | `SPACE_ID` | 知识库空间 ID |
-| `QWEN_API_KEY` | LLM API Key |
+| `LLM_API_KEY` | LLM 网关 API Key（兼容旧名 `QWEN_API_KEY`） |
+| `LLM_MODEL` | 分类模型名，默认 `deepseek-v4-flash` |
+| `LLM_BASE_URL` | 网关地址，默认 `https://qlitellm.phicotek.com/v1` |
 | `SCAN_ROOT_TOKEN` 或 `SCAN_FOLDER_NAME` | 扫描源（二选一） |
 | `TARGET_PARENT_TOKEN` 或 `TARGET_ROOT_NAME` | 复制目标（二选一） |
 
@@ -259,6 +261,8 @@ READ_WORKERS=2
 | **`READ_WORKERS`** | **`2`** | **`2`** | 并行读正文线程数；过高易触发飞书限流 `99991400` |
 | `CLASSIFY_WORKERS` | `4` | 保持 4 | 分类线程数；实际 LLM 并发被限制为 2，改小无益 |
 | `CLASSIFY_MAX_CHARS` | `3000` | — | 送入 LLM 的正文最大字符数 |
+| `LLM_MODEL` | `deepseek-v4-flash` | — | LLM 模型名（换模型只改此项） |
+| `LLM_BASE_URL` | `https://qlitellm.phicotek.com/v1` | — | OpenAI 兼容网关地址 |
 | `USE_CLASSIFY_CACHE` | `true` | — | 分类结果 SQLite 缓存 |
 | `LLM_MAX_RETRIES` | `6` | — | LLM 失败重试次数 |
 | `LLM_REQUEST_TIMEOUT` | `120` | — | LLM 单次超时（秒） |
@@ -274,7 +278,8 @@ FEISHU_APP_SECRET=xxx
 SPACE_ID=7595802147485141976
 SCAN_ROOT_TOKEN=JUWxwwvfJiLWQvk9HLHc3b24nie
 TARGET_PARENT_TOKEN=GPFewOUJ1iGBrGks7R7cB137nDh
-QWEN_API_KEY=sk-xxx
+LLM_API_KEY=sk-xxx
+LLM_MODEL=deepseek-v4-flash
 READ_WORKERS=2
 ENABLE_SHARED_DEDUP=false
 ```
@@ -339,7 +344,7 @@ Remove-Item scanned_documents_*.json -ErrorAction SilentlyContinue
 
 ### 9.1 标签树
 
-分类依据 `qwen_classifier.py` 中硬编码的 `LABEL_TREE`，顶层包括 `Cellular`、`Automotive`、`Smart` 等，最深 3 级。LLM 必须从树中选择路径，无效路径回退 `Others`。
+分类依据 `llm_tree_classifier.py` 中硬编码的 `LABEL_TREE`，顶层包括 `Cellular`、`Automotive`、`Smart` 等，最深 3 级。LLM 必须从树中选择**叶子路径**，无效路径回退 `Others`；非叶子结果会二次下钻或关键词匹配。
 
 ### 9.2 输出格式
 
@@ -532,7 +537,7 @@ flowchart TD
     S4 -->|失败| S4E[❌ 退出]
     S4 -->|成功| S5[初始化组件]
     S5 --> S5A[FeishuDocumentReader]
-    S5 --> S5B[QwenTreeClassifier + ClassifyCache]
+    S5 --> S5B[LLMTreeClassifier + ClassifyCache]
     S5 --> S5C[FeishuNodeCreator / FolderNameChecker]
     S5 --> S5D[FeishuDocumentTagAdder]
 
@@ -674,7 +679,7 @@ flowchart TD
         C5 -->|是| C5H[返回缓存 tag]
         C5 -->|否| C6[LLM_CONCURRENCY 获取信号量<br/>并发 ≤ 2]
         C6 --> C7[LLM_RATE_LIMITER.wait<br/>1.2 req/s]
-        C7 --> C8[POST Qwen API<br/>正文前 CLASSIFY_MAX_CHARS 字符]
+        C7 --> C8[POST LLM API<br/>LLM_MODEL<br/>正文前 CLASSIFY_MAX_CHARS 字符]
         C8 --> C9{成功?}
         C9 -->|429/5xx| C10[指数退避重试]
         C10 --> C8
@@ -809,7 +814,7 @@ flowchart LR
     subgraph INPUT["外部输入"]
         ENV[".env"]
         FEISHU["飞书 Wiki / Docx API"]
-        LLM["Qwen LiteLLM"]
+        LLM["LLM Gateway / LLM_MODEL"]
     end
 
     subgraph RUNTIME["运行时"]

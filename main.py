@@ -26,7 +26,7 @@ from classify_cache import ClassifyCache
 from copy_doc import FeishuWikiCopier
 from create_feishu_node import FeishuNodeCreator
 from feishu_title_check import FolderNameChecker
-from qwen_classifier import QwenTreeClassifier
+from llm_tree_classifier import LLMTreeClassifier
 from read_feishu_doc import FeishuDocumentReader
 from run_logging import setup_run_log
 from shared_state import SharedCopyState, default_worker_id
@@ -56,7 +56,9 @@ CLASSIFY_VERBOSE = config.CLASSIFY_VERBOSE
 LLM_MAX_RETRIES = config.LLM_MAX_RETRIES
 LLM_REQUEST_TIMEOUT = config.LLM_REQUEST_TIMEOUT
 PROGRESS_INTERVAL = config.PROGRESS_INTERVAL
-QWEN_API_KEY = config.QWEN_API_KEY
+LLM_API_KEY = config.LLM_API_KEY
+LLM_BASE_URL = config.LLM_BASE_URL
+LLM_MODEL = config.LLM_MODEL
 ENABLE_SHARED_DEDUP = config.ENABLE_SHARED_DEDUP
 SHARED_STATE_DB = config.SHARED_STATE_DB
 WORKER_ID = config.WORKER_ID
@@ -301,7 +303,7 @@ def batch_read_contents(
 
 def batch_classify_documents(
     read_results: Dict[str, Tuple[str, Optional[str]]],
-    classifier: QwenTreeClassifier,
+    classifier: LLMTreeClassifier,
     workers: int,
     progress_interval: int = PROGRESS_INTERVAL,
 ) -> Dict[str, Optional[Dict]]:
@@ -600,6 +602,7 @@ def main():
     print(f"   - 使用缓存: {USE_CACHE}")
     print(f"   - 最大文档数: {MAX_DOCUMENTS if MAX_DOCUMENTS else '无限制'}")
     print(f"   - 并行读取: {READ_WORKERS} | 并行分类: {CLASSIFY_WORKERS} | LLM重试: {LLM_MAX_RETRIES}")
+    print(f"   - LLM 模型: {LLM_MODEL} | 网关: {LLM_BASE_URL}")
     print(f"   - 分类正文上限: {CLASSIFY_MAX_CHARS} 字符 | 分类缓存: {USE_CLASSIFY_CACHE}")
     print(f"   - 多人并行去重: {ENABLE_SHARED_DEDUP}")
     if ENABLE_SHARED_DEDUP:
@@ -623,8 +626,10 @@ def main():
     print("\n🔧 步骤2: 初始化组件...")
     reader = FeishuDocumentReader(token_manager)
     classify_cache = ClassifyCache() if USE_CLASSIFY_CACHE else None
-    classifier = QwenTreeClassifier(
-        QWEN_API_KEY,
+    classifier = LLMTreeClassifier(
+        LLM_API_KEY,
+        model=LLM_MODEL,
+        base_url=LLM_BASE_URL,
         max_content_chars=CLASSIFY_MAX_CHARS,
         verbose=CLASSIFY_VERBOSE,
         cache=classify_cache,

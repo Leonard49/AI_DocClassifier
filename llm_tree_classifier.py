@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-基于 Qwen API 的多层级标签树文本分类器
+多层级标签树 LLM 文本分类器（OpenAI 兼容 API）
 输出 JSON 格式，例如 {"tag1": ["Cellular"], "tag2": ["4G network"]}
+模型与网关通过环境变量 LLM_MODEL / LLM_BASE_URL 配置。
 """
 
 import os
 import json
 import random
+import re
 import time
 from typing import Dict, List, Union, Optional, Tuple, TYPE_CHECKING
 
@@ -27,13 +29,139 @@ if TYPE_CHECKING:
 
 RETRYABLE_HTTP_STATUS = frozenset({429, 500, 502, 503, 504})
 
+DEFAULT_LLM_BASE_URL = "https://qlitellm.phicotek.com/v1"
+DEFAULT_LLM_MODEL = "deepseek-v4-flash"
 
-class QwenTreeClassifier:
-    """使用 Qwen API 对文本进行多层级标签树分类，输出 JSON 格式的路径"""
 
-    # Fixed LLM gateway settings (override via constructor if needed)
-    QWEN_BASE_URL = "https://qlitellm.phicotek.com/v1"
-    QWEN_MODEL = "qwen3.6-plus"
+class LLMTreeClassifier:
+    """使用 OpenAI 兼容 API 对文本进行多层级标签树分类，输出 JSON 格式的路径"""
+
+    REFINEMENT_ALIASES = {
+        ("Smart -> BSP", "LCD/TP"): ["lcd", "tp", "touch panel", "display", "mipi", "屏", "触摸", "lt8912", "hdmi"],
+        ("Smart -> BSP", "Camera"): ["camera", "摄像", "imx", "ov", "sensor camera"],
+        ("Smart -> BSP", "Sensor"): ["sensor", "accel", "gyro", "gsensor", "als", "psensor"],
+        ("Smart -> BSP", "GPIO"): ["gpio", "pin", "pinctrl"],
+        ("Smart -> BSP", "Audio"): ["audio", "mic", "speaker", "codec", "i2s", "acdb", "mixer", "录音"],
+        ("Smart -> BSP", "I2C/UART/SPI/CAN"): [
+            "i2c", "uart", "spi", "can", "serial", "rtc", "字符设备",
+            "character device", "device driver",
+        ],
+        ("Smart -> BSP", "USB"): ["usb", "adb", "type-c", "typec"],
+        ("Smart -> BSP", "SD CARD/SIM"): [
+            "sd card", "sdcard", "tf card", "sim card", "sdio",
+            "nand", "emmc", "flash", "partition", "ecc",
+            "ddr", "emi", "ett", "memory",
+        ],
+        ("Smart -> BSP", "Fuel guage/Charging/NTC"): ["fuel", "gauge", "guage", "charging", "charger", "battery", "ntc", "电池", "充电"],
+        ("Smart -> BSP", "ETH/NFC/WiFi"): [
+            "eth", "ethernet", "nfc", "wifi", "wi-fi", "wlan", "wpa",
+            "hostapd", "bluetooth", "blue tooth", "蓝牙",
+        ],
+        ("Smart -> System", "OTA"): ["ota", "fota", "dfota", "upgrade", "升级"],
+        ("Smart -> System", "SELinux"): ["selinux", "sepolicy", "avc denied"],
+        ("Smart -> System", "Secureboot"): ["secureboot", "secure boot", "verity", "dm-verity"],
+        ("Smart -> System", "系统优化"): [
+            "optimization", "optimize", "性能", "优化", "memory", "内存",
+            "storage", "权限", "iptables", "git", "boot", "启动", "adb",
+            "root", "unpacking", "代码下载", "系统启动", "分区", "重启",
+            "rescueparty", "qfil", "non-hlos", "repository", "repo",
+            "compile", "编译", "烧录",
+        ],
+        ("Smart -> System", "Thermal"): ["thermal", "temperature", "温度", "过热"],
+        ("Smart -> Yocto", "yocto 系统自启动"): ["autostart", "auto start", "自启动", "开机启动", "systemd"],
+        ("Smart -> Yocto", "yocto 应用内置"): ["内置", "preinstall", "built-in"],
+        ("Smart -> Yocto", "yocto 系统优化&裁剪"): [
+            "裁剪", "overlay", "partition", "rootfs", "优化",
+            "ubuntu", "linux", "bitbake", "oe-core", "sdk编译", "sdk 编译",
+            "system compilation", "build_wf", "permission denied",
+            "toolchain", "工具链", "环境搭建", "compile error", "root用户",
+        ],
+        ("Smart -> Yocto", "yocto APP开发"): ["app", "application", "应用开发", "gstreamer", "gst"],
+        ("Smart -> Yocto", "yocto 第三方工具集成"): ["docker", "opencv", "mediapipe", "third party", "第三方"],
+        ("Smart -> BP", "XBL"): ["xbl", "edk2", "uefi", "bootloader"],
+        ("Smart -> BP", "TZ"): ["tz", "trustzone", "qsee"],
+        ("Cellular -> Network", "LPWA Network"): ["lpwa", "nb-iot", "nbiot", "cat.m", "cat-m", "emtc"],
+        ("Cellular -> Network", "LTE Network"): [
+            "lte", "4g", "cat1", "cat.1", "gsm", "wcdma", "2g",
+            "rrc", "attach", "rplmn", "edrx", "rat", "mtu", "9x07",
+            "8910", "register", "registration", "network", "注网",
+            "网络", "漫游", "timer", "掉网",
+        ],
+        ("Cellular -> Network", "5G Network"): ["5g", "nr", "sa", "nsa"],
+        ("Cellular -> 网卡拨号", "ECM"): ["ecm", "eth0"],
+        ("Cellular -> 网卡拨号", "QMI"): ["qmi", "quectel-cm", "qmi_wwan", "gobinet"],
+        ("Cellular -> 网卡拨号", "MBIM"): ["mbim"],
+        ("Cellular -> 网卡拨号", "RNDIS"): ["rndis"],
+        ("Cellular -> 网卡拨号", "RMNET"): [
+            "rmnet", "qcmap", "multi-data-call", "multi data call",
+            "data-call", "vlan", "ippt", "wan", "route/ippt", "多路拨号",
+            "route", "default route", "default.script", "dhcp", "获取ip",
+            "ip地址", "路由模式", "拨号成功", "linux拨号", "网卡路由",
+        ],
+        ("Cellular -> SIM Card", "USIM"): [
+            "usim", "sim", "iccid", "imsi", "imei", "meid", "mcc", "mnc",
+            "fplmn", "rplmn", "stk", "crsm", "dsss", "卡槽", "切卡",
+            "无卡", "psm", "供电", "sim卡",
+        ],
+        ("Cellular -> SIM Card", "eSIM"): ["esim", "e-sim"],
+        ("Cellular -> SIM Card", "iSIM"): ["isim", "i-sim"],
+        ("Cellular -> SIM Card", "vSIM"): ["vsim", "v-sim"],
+        ("QuecOpen -> 快速入门&FAQ", "SDK介绍及编译"): ["sdk", "compile", "编译", "integration", "hal"],
+        ("QuecOpen -> 快速入门&FAQ", "固件升级"): ["upgrade", "升级", "dfota", "fota"],
+        ("QuecOpen -> 快速入门&FAQ", "Log抓取"): ["log", "日志"],
+        ("QuecOpen -> 快速入门&FAQ", "开发调试相关"): ["debug", "调试", "入门"],
+        ("QuecOpen -> 平台和系统", "Secure Boot"): [
+            "isolated user", "user environment", "有限目录", "访问有限",
+            "权限", "passwd", "shadow", "secure", "security", "安全",
+        ],
+        ("QuecOpen -> 平台和系统", "Dfota"): ["dfota", "fota", "upgrade", "升级"],
+        ("QuecOpen -> 平台和系统", "性能优化"): [
+            "performance", "性能", "优化", "partition", "分区", "filesystem",
+            "file system", "文件系统", "ubi", "mtd", "squashfs", "rootfs",
+            "glibc", "开机启动", "boot", "logo",
+        ],
+        ("QuecOpen -> 常见外设接口及驱动", "GPIO"): ["gpio", "adc", "watchdog", "看门狗"],
+        ("QuecOpen -> 常见外设接口及驱动", "I2C/UART/SPI"): ["i2c", "uart", "spi"],
+        ("QuecOpen -> 常见外设接口及驱动", "USB"): ["usb"],
+        ("QuecOpen -> 常见外设接口及驱动", "I2S"): ["i2s"],
+        ("QuecOpen -> 常见外设接口及驱动", "SDIO"): ["sdio", "emmc", "sd card", "sdcard"],
+        ("QuecOpen -> 常见外设接口及驱动", "SGMII"): ["sgmii", "网口", "ethernet", "网卡"],
+        ("QuecOpen -> 常见外设接口及驱动", "设备树"): [
+            "设备树", "device tree", "devicetree", "dts", "dtsi", "insmod", ".ko",
+        ],
+        ("QuecOpen -> 数据拨号", "Open API拨号"): ["open api", "api拨号", "默认路由", "default route"],
+        ("QuecOpen -> 数据拨号", "PPP拨号"): ["ppp"],
+        ("QuecOpen -> 数据拨号", "USB上网及拨号工具"): ["usb", "拨号工具"],
+        ("QuecOpen -> 设备及网络管理", "网络状态获取及说明"): [
+            "network management", "网络管理", "mac", "vlan", "lan", "ip地址",
+            "qlril", "api-test", "网络状态",
+        ],
+        ("QuecOpen -> 设备及网络管理", "网络注册步骤及常见问题分析"): ["注册", "驻网", "attach"],
+        ("QuecOpen -> 设备及网络管理", "SIM使用及管理"): ["sim"],
+        ("QuecOpen -> Linux应用", "MQTT"): ["mqtt"],
+        ("QuecOpen -> Linux应用", "HTTP"): ["http"],
+        ("QuecOpen -> Linux应用", "FTP"): ["ftp"],
+        ("QuecOpen -> Linux应用", "时间系统"): ["time", "时间", "rtc", "ntp"],
+        ("QuecOpen -> Linux应用", "LWM2M"): ["lwm2m"],
+        ("QuecOpen -> Linux应用", "应用日志管理"): ["log", "日志"],
+        ("QuecOpen -> Linux应用", "QMI&MCM接口"): ["qmi", "mcm", "urc"],
+        ("QuecOpen -> RTOS系统及应用", "MQTT"): ["mqtt"],
+        ("QuecOpen -> RTOS系统及应用", "HTTP"): ["http"],
+        ("QuecOpen -> RTOS系统及应用", "FTP"): ["ftp"],
+        ("QuecOpen -> RTOS系统及应用", "LWM2M"): ["lwm2m"],
+        ("QuecOpen -> RTOS系统及应用", "应用日志"): ["log", "日志", "timer"],
+        ("Cellular -> 通信接口", "UART"): ["uart", "ri", "urc", "at指令", "at command"],
+        ("Cellular -> 通信接口", "USB"): ["usb"],
+        ("Cellular -> 通信接口", "PCIE"): ["pcie", "pci-e"],
+        ("Cellular -> 通信接口", "CMUX"): ["cmux"],
+        ("Cellular -> 认证", "FCC"): ["fcc"],
+        ("Cellular -> 认证", "AT&T"): ["at&t"],
+        ("Cellular -> 认证", "Verizon"): ["verizon"],
+        ("周会通", "会议纪要"): ["会议", "meeting", "纪要"],
+        ("周会通", "周报"): ["周报", "weekly", "重点客户", "工作分享"],
+        ("周会通", "通知类"): ["通知", "notice"],
+        ("Antenna", "PCB Antenna"): ["pcb"],
+    }
 
     # ============================================================
     # 预定义标签树（唯一数据源）
@@ -240,12 +368,14 @@ class QwenTreeClassifier:
         cache: Optional["ClassifyCache"] = None,
         max_retries: int = 6,
         request_timeout: float = 120.0,
+        model: Optional[str] = None,
+        base_url: Optional[str] = None,
     ):
         self.api_key = api_key
         if not self.api_key:
-            raise ValueError("请设置有效的 Qwen API Key（环境变量 QWEN_API_KEY）")
-        self.model = self.QWEN_MODEL
-        self.base_url = self.QWEN_BASE_URL
+            raise ValueError("请设置有效的 LLM API Key（环境变量 LLM_API_KEY）")
+        self.model = model or DEFAULT_LLM_MODEL
+        self.base_url = base_url or DEFAULT_LLM_BASE_URL
         # 关闭 SDK 内置短间隔重试，避免 4 路并发时同时打出大量 502 重试
         self.client = OpenAI(
             api_key=self.api_key,
@@ -258,8 +388,11 @@ class QwenTreeClassifier:
         self.cache = cache
         self.max_retries = max_retries
 
-        # 预计算所有合法路径（用于后校验）
-        self.valid_paths = self._extract_all_paths(self.LABEL_TREE)
+        # Precompute all paths and leaf-only paths. Classification is considered
+        # complete only when the selected path has no child category.
+        self.all_paths = self._extract_all_paths(self.LABEL_TREE)
+        self.leaf_paths = self._extract_leaf_paths(self.LABEL_TREE)
+        self.valid_paths = self.leaf_paths
         self.root_labels = list(self.LABEL_TREE.keys())
         
         # 生成标签树描述（自动从 LABEL_TREE 生成，无需手动维护）
@@ -282,6 +415,78 @@ class QwenTreeClassifier:
             for item in tree:
                 paths.append(f"{prefix} -> {item}" if prefix else item)
         return paths
+
+    def _extract_leaf_paths(self, tree: Union[Dict, List], prefix: str = "") -> List[str]:
+        """Return only paths that have no child category."""
+        paths = []
+        if isinstance(tree, dict):
+            for key, value in tree.items():
+                current = f"{prefix} -> {key}" if prefix else key
+                if isinstance(value, dict) and value:
+                    paths.extend(self._extract_leaf_paths(value, current))
+                elif isinstance(value, list) and value:
+                    for item in value:
+                        paths.append(f"{current} -> {item}")
+                else:
+                    paths.append(current)
+        elif isinstance(tree, list):
+            for item in tree:
+                paths.append(f"{prefix} -> {item}" if prefix else item)
+        return paths
+
+    def _is_leaf_path(self, path_str: str) -> bool:
+        return path_str == "Others" or path_str in self.leaf_paths
+
+    def _leaf_descendants(self, parent_path: str) -> List[str]:
+        prefix = f"{parent_path} -> "
+        return [path for path in self.leaf_paths if path.startswith(prefix)]
+
+    def _keyword_refine_leaf(
+        self,
+        parent_path: str,
+        candidates: List[str],
+        user_text: str,
+    ) -> Optional[str]:
+        text = (user_text or "").lower()
+        scores = {}
+        for candidate in candidates:
+            label = candidate.split(" -> ")[-1]
+            candidate_parent = " -> ".join(candidate.split(" -> ")[:-1])
+            custom_aliases = (
+                self.REFINEMENT_ALIASES.get((parent_path, label), [])
+                + self.REFINEMENT_ALIASES.get((candidate_parent, label), [])
+            )
+            aliases = [label] + custom_aliases
+            for index, alias in enumerate(aliases):
+                alias_norm = alias.lower().strip()
+                if alias_norm and alias_norm in text:
+                    scores[candidate] = scores.get(candidate, 0) + (1 if index == 0 else 2)
+        if scores:
+            best_score = max(scores.values())
+            best_matches = sorted(path for path, score in scores.items() if score == best_score)
+            if len(best_matches) == 1:
+                return best_matches[0]
+        return None
+
+    def _tag_to_path(self, tag: Dict[str, List[str]]) -> str:
+        parts = []
+        idx = 1
+        while True:
+            value = tag.get(f"tag{idx}")
+            if not value:
+                break
+            parts.append(value[0])
+            idx += 1
+        return " -> ".join(parts)
+
+    def _build_messages(self, prompt: str) -> List[Dict[str, str]]:
+        return [
+            {
+                "role": "system",
+                "content": "你是一个专业的技术文档分类专家。严格按照分类规则输出，不添加任何额外内容。",
+            },
+            {"role": "user", "content": prompt},
+        ]
 
     def _generate_tree_description(self) -> str:
         """从 LABEL_TREE 自动生成标签树描述文本"""
@@ -324,7 +529,7 @@ class QwenTreeClassifier:
         """构建完整的提示模板"""
         return f"""你是一个文档内容分析专家，请严格遵守"层级标签树"的标签类型，分析文档中的内容将内容按照标签类型进行精确归类。
 
-你的任务：从下面给定的标签树中，选择**唯一一条最合理的层级路径**。
+你的任务：从下面给定的标签树中，选择**唯一一条最合理的最底层叶子路径**。
 
 ====================
 【标签树（必须严格遵守）】
@@ -340,18 +545,23 @@ class QwenTreeClassifier:
 
 2. 1层级必须要符合文章的整体适用范围或者大的方向，后续层级在1层级中选择合适的标签
 
-3. 不允许"跳级"或"并列误用"
+3. 必须选择最底层叶子路径
+   - 如果某个标签下面还有子标签，不能停在这个上层标签
+   - 错误："Smart -> BSP"
+   - 正确："Smart -> BSP -> Audio" 或 "Smart -> BSP -> GPIO" 等 BSP 下的叶子标签
+
+4. 不允许"跳级"或"并列误用"
    - 如果选了子类，必须包含它的父类
    - 例如："5G Network" -> "Cellular -> 5G Network"
 
-4. 只能输出一条路径（最匹配的一条）
+5. 只能输出一条路径（最匹配的一条）
 
-5. 输出必须完全匹配树中的名称（大小写敏感）
+6. 输出必须完全匹配树中的名称（大小写敏感）
 
-6. 如果无法匹配，输出：Others
+7. 如果无法匹配，输出：Others
 
 ====================
-【输出格式（严格）】
+【输出格式（严格，必须是叶子路径）】
 
 只输出一行路径字符串，不要JSON，不要解释：
 
@@ -372,6 +582,27 @@ Others
         """构建用户提示"""
         return self.prompt_template.format(user_text=user_text)
 
+    def _build_refinement_prompt(self, parent_path: str, candidates: List[str], user_text: str) -> str:
+        candidate_text = "\n".join(f"- {path}" for path in candidates)
+        return f"""上一次分类结果只定位到了上层分类：{parent_path}
+
+这个上层分类下面还有子分类，不能作为最终结果。请只从下面这些最底层叶子路径中选择唯一一个最匹配的路径。
+
+====================
+【可选叶子路径】
+{candidate_text}
+====================
+
+要求：
+1. 只能输出上面列表中的一整行路径。
+2. 不要输出上层分类。
+3. 不要解释，不要 JSON。
+4. 如果确实无法匹配，输出：Others
+
+【用户文本】
+{user_text}
+"""
+
     def _clean_response(self, text: str) -> str:
         """清理 AI 返回的文本，提取出路径字符串"""
         raw = text.strip()
@@ -388,6 +619,10 @@ Others
         # 如果结果中包含换行，只取第一行（通常就是路径）
         if "\n" in raw:
             raw = raw.split("\n")[0].strip()
+        raw = re.sub(r"^\s*[-*]\s*", "", raw)
+        raw = re.sub(r"^\s*\d+[.)、]\s*", "", raw)
+        raw = raw.replace("→", "->").replace("=>", "->")
+        raw = re.sub(r"\s*->\s*", " -> ", raw)
         return raw
 
     def _path_to_json(self, path_str: str) -> Dict[str, List[str]]:
@@ -401,30 +636,54 @@ Others
             result[f"tag{i}"] = [part]
         return result
 
-    def _validate_path(self, path_str: str) -> str:
+    def _validate_path(
+        self,
+        path_str: str,
+        *,
+        candidate_paths: Optional[List[str]] = None,
+        leaf_only: bool = False,
+    ) -> str:
         """验证路径是否有效，无效则尝试修正或返回 Others"""
         if path_str == "Others":
             return path_str
+        candidates = candidate_paths or (self.leaf_paths if leaf_only else self.all_paths)
         
         # 直接匹配
-        if path_str in self.valid_paths:
+        if path_str in candidates:
             return path_str
+
+        if leaf_only and path_str in self.all_paths:
+            print(f"警告: 路径 '{path_str}' 不是最底层叶子路径")
+            return "Others"
         
-        # 尝试模糊匹配
-        for valid in self.valid_paths:
-            if path_str in valid or valid in path_str:
-                print(f"模糊匹配: '{path_str}' -> '{valid}'")
-                return valid
+        # 尝试模糊匹配；候选必须唯一，避免把上层路径随意扩展到第一个叶子。
+        fuzzy_matches = [
+            valid for valid in candidates
+            if path_str in valid or valid in path_str
+        ]
+        if len(fuzzy_matches) == 1:
+            print(f"模糊匹配: '{path_str}' -> '{fuzzy_matches[0]}'")
+            return fuzzy_matches[0]
         
         # 尝试部分匹配（只匹配最后一级）
         last_part = path_str.split(" -> ")[-1]
-        for valid in self.valid_paths:
-            if valid.endswith(f" -> {last_part}") or valid == last_part:
-                print(f"部分匹配: '{path_str}' -> '{valid}'")
-                return valid
+        partial_matches = [
+            valid for valid in candidates
+            if valid.endswith(f" -> {last_part}") or valid == last_part
+        ]
+        if len(partial_matches) == 1:
+            print(f"部分匹配: '{path_str}' -> '{partial_matches[0]}'")
+            return partial_matches[0]
         
         print(f"警告: 路径 '{path_str}' 不在预定义标签树中，回退为 Others")
         return "Others"
+
+    def _request_path(self, prompt: str) -> str:
+        response = self._chat_completion_with_retry(self._build_messages(prompt))
+        raw_result = response.choices[0].message.content
+        if self.verbose:
+            print(f"AI 返回原始结果: {raw_result}")
+        return self._clean_response(raw_result or "")
 
     def _prepare_text(self, content: str, title: Optional[str] = None) -> str:
         body = (content or "")[: self.max_content_chars]
@@ -477,6 +736,33 @@ Others
             raise last_error
         raise RuntimeError("LLM request failed without exception")
 
+    def _refine_to_leaf_path(self, parent_path: str, user_text: str) -> str:
+        """Run a second pass when the first result stops at a non-leaf category."""
+        if self._is_leaf_path(parent_path):
+            return parent_path
+
+        candidates = self._leaf_descendants(parent_path)
+        if not candidates:
+            print(f"警告: 路径 '{parent_path}' 没有可用叶子子路径，回退为 Others")
+            return "Others"
+
+        keyword_path = self._keyword_refine_leaf(parent_path, candidates, user_text)
+        if keyword_path:
+            if self.verbose:
+                print(f"关键词下钻: '{parent_path}' -> '{keyword_path}'")
+            return keyword_path
+
+        if self.verbose:
+            print(f"路径 '{parent_path}' 不是叶子，进入二次下钻分类")
+        prompt = self._build_refinement_prompt(parent_path, candidates, user_text)
+        raw_path = self._request_path(prompt)
+        refined = self._validate_path(raw_path, candidate_paths=candidates, leaf_only=True)
+        if refined in candidates:
+            return refined
+
+        print(f"警告: 无法将 '{parent_path}' 下钻到叶子路径，回退为 Others")
+        return "Others"
+
     def classify(
         self,
         content: str,
@@ -490,38 +776,34 @@ Others
         if self.cache and obj_token:
             cached = self.cache.get(obj_token, content or "")
             if cached is not None:
+                cached_path = self._tag_to_path(cached)
+                if self._is_leaf_path(cached_path):
+                    if self.verbose:
+                        print(f"📦 使用分类缓存: {obj_token}")
+                    return cached
                 if self.verbose:
-                    print(f"📦 使用分类缓存: {obj_token}")
-                return cached
+                    print(f"📦 忽略非叶子分类缓存: {obj_token} -> {cached_path}")
 
         truncated = self._prepare_text(content, title)
         prompt = self._build_prompt(truncated)
 
-        messages = [
-            {
-                "role": "system",
-                "content": "你是一个专业的技术文档分类专家。严格按照分类规则输出，不添加任何额外内容。",
-            },
-            {"role": "user", "content": prompt},
-        ]
-
         try:
-            response = self._chat_completion_with_retry(messages)
-            raw_result = response.choices[0].message.content
-            if self.verbose:
-                print(f"AI 返回原始结果: {raw_result}")
-
-            path_str = self._clean_response(raw_result or "")
-            path_str = self._validate_path(path_str)
+            raw_path = self._request_path(prompt)
+            path_str = self._validate_path(raw_path)
+            if not self._is_leaf_path(path_str):
+                path_str = self._refine_to_leaf_path(path_str, truncated)
             result = self._path_to_json(path_str)
 
             if self.cache and obj_token:
-                self.cache.set(obj_token, content or "", result)
+                try:
+                    self.cache.set(obj_token, content or "", result)
+                except Exception as cache_exc:
+                    print(f"警告: 分类缓存写入失败，继续返回分类结果: {cache_exc}")
             return result
 
         except Exception as e:
             title_hint = f" ({title})" if title else ""
-            print(f"调用 Qwen API 失败{title_hint}: {e}")
+            print(f"调用 LLM API 失败{title_hint}: {e}")
             return None
     
     def get_all_labels(self) -> List[str]:

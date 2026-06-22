@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Rate limit and concurrency cap for LiteLLM / Qwen classification calls."""
+"""Rate limit and concurrency cap for LiteLLM classification calls."""
 
 import threading
 

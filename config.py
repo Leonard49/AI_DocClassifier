@@ -72,8 +72,10 @@ LLM_MAX_RETRIES = _env_int("LLM_MAX_RETRIES", 6)
 LLM_REQUEST_TIMEOUT = _env_float("LLM_REQUEST_TIMEOUT", 120.0)
 PROGRESS_INTERVAL = _env_int("PROGRESS_INTERVAL", 10)
 
-# LLM credentials
-QWEN_API_KEY = _env("QWEN_API_KEY", "")
+# LLM (OpenAI-compatible gateway)
+LLM_API_KEY = _env("LLM_API_KEY") or _env("QWEN_API_KEY", "")
+LLM_BASE_URL = _env("LLM_BASE_URL") or "https://qlitellm.phicotek.com/v1"
+LLM_MODEL = _env("LLM_MODEL") or "deepseek-v4-flash"
 
 # Multi-worker parallel processing (shared folder on network drive recommended)
 ENABLE_SHARED_DEDUP = _env_bool("ENABLE_SHARED_DEDUP", True)
@@ -91,8 +93,8 @@ def validate() -> None:
         missing.append("FEISHU_APP_SECRET")
     if not SPACE_ID:
         missing.append("SPACE_ID")
-    if not QWEN_API_KEY:
-        missing.append("QWEN_API_KEY")
+    if not LLM_API_KEY:
+        missing.append("LLM_API_KEY")
     if not SCAN_ROOT_TOKEN and not SCAN_FOLDER_NAME:
         missing.append("SCAN_ROOT_TOKEN or SCAN_FOLDER_NAME")
     if not TARGET_PARENT_TOKEN and not TARGET_ROOT_NAME:
