@@ -41,6 +41,8 @@ class SimpleWikiScanner:
             "documents_found": 0,
             "non_leaf_docx_skipped": 0,
         }
+        # node_token -> {title, parent_node_token}，用于构建叶子文档来源路径
+        self.node_registry: Dict[str, Dict] = {}
 
         if self.enable_db_cache:
             try:
@@ -100,6 +102,34 @@ class SimpleWikiScanner:
         """叶子节点：无子节点。"""
         return not node.get("has_child")
 
+    def _register_node(self, node: Dict) -> None:
+        token = node.get("node_token")
+        if not token:
+            return
+        self.node_registry[token] = {
+            "title": node.get("title") or "",
+            "parent_node_token": node.get("parent_node_token"),
+        }
+
+    def _build_source_path(self, parent_token: Optional[str]) -> str:
+        """从父节点向上拼接文件夹标题，形成来源路径 breadcrumb。"""
+        if not parent_token:
+            return ""
+        parts: List[str] = []
+        current: Optional[str] = parent_token
+        visited: Set[str] = set()
+        while current and current not in visited:
+            visited.add(current)
+            info = self.node_registry.get(current)
+            if not info:
+                break
+            title = (info.get("title") or "").strip()
+            if title:
+                parts.append(title)
+            current = info.get("parent_node_token")
+        parts.reverse()
+        return " / ".join(parts)
+
     def _maybe_collect_leaf_document(self, node: Dict, all_documents: List[Dict]) -> None:
         """仅收集叶子 docx 节点，跳过作为目录/索引的非叶子文档。"""
         if node.get("obj_type") != "docx":
@@ -113,6 +143,7 @@ class SimpleWikiScanner:
             logger.debug(f"跳过非叶子文档: {title} ({node_token})")
             return
 
+        node["source_path"] = self._build_source_path(node.get("parent_node_token"))
         all_documents.append(node)
         logger.info(f"找到叶子文档: {title} ({node_token})")
         self.stats["documents_found"] += 1
@@ -147,6 +178,7 @@ class SimpleWikiScanner:
     def _scan_from_root(self, space_id: str, use_cache: bool) -> List[Dict]:
         """从根节点扫描整个知识库"""
         all_documents = []
+        self.node_registry = {}
         scanned_nodes = set()
         pending_nodes = deque()
         
@@ -189,6 +221,7 @@ class SimpleWikiScanner:
                         continue
                     
                     node["parent_node_token"] = current_parent
+                    self._register_node(node)
                     self._cache_node(node)
                     
                     self._maybe_collect_leaf_document(node, all_documents)
@@ -221,6 +254,7 @@ class SimpleWikiScanner:
     def _scan_from_node(self, space_id: str, node_token: str, use_cache: bool) -> List[Dict]:
         """从指定节点开始扫描（只扫描该节点下的内容）"""
         all_documents = []
+        self.node_registry = {}
         scanned_nodes = set()
         pending_nodes = deque()
         
@@ -264,6 +298,7 @@ class SimpleWikiScanner:
                         continue
                     
                     node["parent_node_token"] = current_parent
+                    self._register_node(node)
                     self._cache_node(node)
                     
                     self._maybe_collect_leaf_document(node, all_documents)

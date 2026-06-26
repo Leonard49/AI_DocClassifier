@@ -32,6 +32,69 @@ RETRYABLE_HTTP_STATUS = frozenset({429, 500, 502, 503, 504})
 DEFAULT_LLM_BASE_URL = "https://qlitellm.phicotek.com/v1"
 DEFAULT_LLM_MODEL = "deepseek-v4-flash"
 
+# Sentinel key in classify() result — excluded report types (not copied / not classified)
+EXCLUDED_REPORT_KEY = "__excluded__"
+
+# Title/content patterns (case-insensitive); checked in order — first match wins
+EXCLUDED_REPORT_TITLE_PATTERNS: Dict[str, List[str]] = {
+    "客户问题跟踪": [
+        r"issue\s*tracking",
+        r"key\s*customer\s*issue",
+        r"customer\s*issue",
+        r"客户问题跟踪",
+        r"问题跟踪",
+    ],
+    "会议纪要": [
+        r"会议纪要",
+        r"会议记录",
+        r"meeting\s*minutes?",
+        r"minutes?\s*of\s*meeting",
+    ],
+    "日报": [
+        r"日报",
+        r"daily\s*report",
+        r"daily\s*work\s*report",
+        r"daily\s*[&/]\s*weekly",
+        r"daily\s+and\s+weekly",
+    ],
+    "周报": [
+        r"周报",
+        r"weekly\s*report",
+        r"weekly\s*work\s*report",
+        r"daily\s*[&/]\s*weekly",
+        r"daily\s+and\s+weekly",
+        r"daily\s*&\s*weekly",
+    ],
+}
+
+EXCLUDED_REPORT_TYPES = tuple(EXCLUDED_REPORT_TITLE_PATTERNS.keys())
+
+# 源 wiki 文件夹名 -> 标签树顶层域（分类时优先）
+SOURCE_DOMAIN_FOLDER_PATTERNS: Dict[str, List[str]] = {
+    "ShortRange": [
+        r"短距离",
+        r"short\s*range",
+        r"shortrange",
+    ],
+    "Automotive": [
+        r"车载",
+        r"automotive",
+    ],
+    "GNSS": [
+        r"gnss",
+    ],
+}
+
+
+def is_excluded_report_tag(tag: Optional[Dict]) -> bool:
+    """True when classify() marked the document as a non-technical report to skip."""
+    return bool(tag and EXCLUDED_REPORT_KEY in tag)
+
+
+def excluded_report_category(tag: Dict) -> str:
+    values = tag.get(EXCLUDED_REPORT_KEY) or []
+    return values[0] if values else "未知"
+
 
 class LLMTreeClassifier:
     """使用 OpenAI 兼容 API 对文本进行多层级标签树分类，输出 JSON 格式的路径"""
@@ -560,8 +623,19 @@ class LLMTreeClassifier:
 
 7. 如果无法匹配，输出：Others
 
+8. 【排除类文档 — 不要分类、不要复制】
+   若标题或正文明确属于以下类型，不属于技术文档分类范围，不要输出标签树路径，只输出一行：
+   SKIP:周报  或  SKIP:日报  或  SKIP:会议纪要  或  SKIP:客户问题跟踪
+
+   - 周报：Weekly Report、Weekly Work Report、工作周报、Daily&Weekly Work Report 等周期性工作汇报
+   - 日报：Daily Report、Daily Work Report、每日工作汇报
+   - 会议纪要：Meeting Minutes、会议记录、会议纪要
+   - 客户问题跟踪：Issue Tracking、Key Customer Issue Tracking、Customer Issue Tracking、客户问题跟踪
+
+   即使标签树中存在「周会通 -> 周报/会议纪要」，上述类型也必须输出 SKIP:... 而非树路径。
+
 ====================
-【输出格式（严格，必须是叶子路径）】
+【输出格式（严格，必须是叶子路径或 SKIP）】
 
 只输出一行路径字符串，不要JSON，不要解释：
 
@@ -569,6 +643,8 @@ class LLMTreeClassifier:
 Cellular -> 5G Network
 Smart -> BSP -> Audio
 GNSS -> GNSS功能原理 -> RTK
+SKIP:周报
+SKIP:客户问题跟踪
 Others
 
 ====================
@@ -578,9 +654,90 @@ Others
 【分类结果】
 """
 
-    def _build_prompt(self, user_text: str) -> str:
+    def _build_prompt(self, user_text: str, source_path: Optional[str] = None) -> str:
         """构建用户提示"""
-        return self.prompt_template.format(user_text=user_text)
+        prompt = self.prompt_template.format(user_text=user_text)
+        block = self._source_domain_prompt_block(source_path)
+        if block:
+            prompt = prompt.replace("【用户文本】", block + "\n【用户文本】")
+        return prompt
+
+    @staticmethod
+    def detect_source_domain_hint(source_path: Optional[str]) -> Optional[str]:
+        """
+        根据源 wiki 路径判断优先顶层域：ShortRange / Automotive / GNSS。
+        匹配路径前若干层文件夹名，避免深层标题误触发。
+        """
+        if not source_path:
+            return None
+        segments = [s.strip() for s in re.split(r"\s*/\s*", source_path) if s.strip()]
+        for segment in segments[:3]:
+            if len(segment) > 40:
+                continue
+            seg_lower = segment.lower()
+            for domain, patterns in SOURCE_DOMAIN_FOLDER_PATTERNS.items():
+                if seg_lower == domain.lower():
+                    return domain
+                for pattern in patterns:
+                    if re.fullmatch(pattern, segment, re.IGNORECASE):
+                        return domain
+                    if len(segment) <= 24 and re.search(pattern, segment, re.IGNORECASE):
+                        return domain
+        return None
+
+    def _source_domain_prompt_block(self, source_path: Optional[str]) -> str:
+        domain = self.detect_source_domain_hint(source_path)
+        if not domain or not source_path:
+            return ""
+        return f"""====================
+【来源文件夹优先 — 必须遵守】
+源知识库路径：{source_path}
+判定来源域：{domain}
+
+分类时顶层（tag1）必须优先选择「{domain}」，并在该域下选择最匹配的叶子路径。
+除非正文与 {domain} 完全无关，否则禁止分到 Cellular、Smart、QuecOpen、Others 等其他顶层域。
+===================="""
+
+    @staticmethod
+    def _path_under_domain(path_str: str, domain: str) -> bool:
+        return path_str == domain or path_str.startswith(f"{domain} -> ")
+
+    def _enforce_domain_hint(
+        self,
+        path_str: str,
+        domain_hint: str,
+        user_text: str,
+    ) -> str:
+        """LLM 结果不在来源域子树内时，限定在该域下重新下钻。"""
+        if (
+            not domain_hint
+            or path_str in ("Others", "")
+            or self._path_under_domain(path_str, domain_hint)
+        ):
+            return path_str
+
+        candidates = self._leaf_descendants(domain_hint)
+        if not candidates:
+            return path_str
+
+        if self.verbose:
+            print(
+                f"📂 来源域优先: '{path_str}' 不在 {domain_hint} 下，"
+                f"改在 {domain_hint} 子树中重选"
+            )
+
+        keyword_path = self._keyword_refine_leaf(domain_hint, candidates, user_text)
+        if keyword_path:
+            return keyword_path
+
+        prompt = self._build_refinement_prompt(domain_hint, candidates, user_text)
+        raw_path = self._request_path(prompt)
+        refined = self._validate_path(raw_path, candidate_paths=candidates, leaf_only=True)
+        if refined in candidates:
+            return refined
+
+        print(f"警告: 无法在 {domain_hint} 子树内找到叶子路径，保留原结果 '{path_str}'")
+        return path_str
 
     def _build_refinement_prompt(self, parent_path: str, candidates: List[str], user_text: str) -> str:
         candidate_text = "\n".join(f"- {path}" for path in candidates)
@@ -692,6 +849,42 @@ Others
         return body
 
     @staticmethod
+    def make_excluded_tag(category: str) -> Dict[str, List[str]]:
+        return {EXCLUDED_REPORT_KEY: [category]}
+
+    def detect_excluded_report(
+        self,
+        title: Optional[str] = None,
+        content: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        Detect weekly/daily reports, meeting minutes, or issue-tracking docs.
+        Returns category name if the document should be skipped without LLM classify.
+        """
+        title_text = (title or "").strip()
+        content_head = (content or "")[:800].strip()
+        for category in EXCLUDED_REPORT_TYPES:
+            patterns = EXCLUDED_REPORT_TITLE_PATTERNS.get(category, [])
+            for pattern in patterns:
+                if title_text and re.search(pattern, title_text, re.IGNORECASE):
+                    return category
+                if content_head and re.search(pattern, content_head, re.IGNORECASE):
+                    return category
+        return None
+
+    def _parse_skip_response(self, raw: str) -> Optional[str]:
+        """Parse LLM output like SKIP:周报 into an excluded category."""
+        if not raw.upper().startswith("SKIP:"):
+            return None
+        category = raw.split(":", 1)[1].strip()
+        if category in EXCLUDED_REPORT_TYPES:
+            return category
+        for known in EXCLUDED_REPORT_TYPES:
+            if known in category:
+                return known
+        return None
+
+    @staticmethod
     def _is_retryable_error(exc: BaseException) -> bool:
         if isinstance(
             exc,
@@ -768,30 +961,64 @@ Others
         content: str,
         obj_token: Optional[str] = None,
         title: Optional[str] = None,
+        source_path: Optional[str] = None,
     ) -> Optional[Dict[str, List[str]]]:
         """主分类方法，返回 JSON 格式的标签路径；正文为空时不分类（不论标题）。"""
         if not (content or "").strip():
             return None
 
+        skip_category = self.detect_excluded_report(title, content)
+        if skip_category:
+            if self.verbose:
+                print(f"⏭️ 排除类文档（{skip_category}），跳过分类: {title or obj_token}")
+            return self.make_excluded_tag(skip_category)
+
+        domain_hint = self.detect_source_domain_hint(source_path)
+
         if self.cache and obj_token:
             cached = self.cache.get(obj_token, content or "")
             if cached is not None:
+                if is_excluded_report_tag(cached):
+                    if self.verbose:
+                        print(f"📦 使用排除类缓存: {obj_token}")
+                    return cached
                 cached_path = self._tag_to_path(cached)
                 if self._is_leaf_path(cached_path):
-                    if self.verbose:
-                        print(f"📦 使用分类缓存: {obj_token}")
-                    return cached
-                if self.verbose:
+                    if domain_hint and not self._path_under_domain(cached_path, domain_hint):
+                        if self.verbose:
+                            print(
+                                f"📦 忽略与来源域不符的分类缓存: "
+                                f"{obj_token} -> {cached_path}"
+                            )
+                    else:
+                        if self.verbose:
+                            print(f"📦 使用分类缓存: {obj_token}")
+                        return cached
+                elif self.verbose:
                     print(f"📦 忽略非叶子分类缓存: {obj_token} -> {cached_path}")
 
         truncated = self._prepare_text(content, title)
-        prompt = self._build_prompt(truncated)
+        prompt = self._build_prompt(truncated, source_path=source_path)
 
         try:
             raw_path = self._request_path(prompt)
+            skip_from_llm = self._parse_skip_response(raw_path)
+            if skip_from_llm:
+                if self.verbose:
+                    print(f"⏭️ LLM 识别为排除类（{skip_from_llm}）: {title or obj_token}")
+                result = self.make_excluded_tag(skip_from_llm)
+                if self.cache and obj_token:
+                    try:
+                        self.cache.set(obj_token, content or "", result)
+                    except Exception as cache_exc:
+                        print(f"警告: 分类缓存写入失败: {cache_exc}")
+                return result
+
             path_str = self._validate_path(raw_path)
             if not self._is_leaf_path(path_str):
                 path_str = self._refine_to_leaf_path(path_str, truncated)
+            if domain_hint:
+                path_str = self._enforce_domain_hint(path_str, domain_hint, truncated)
             result = self._path_to_json(path_str)
 
             if self.cache and obj_token:

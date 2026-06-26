@@ -16,6 +16,7 @@ if sys.platform == "win32":
             _stream.reconfigure(encoding="utf-8")
         except Exception:
             pass
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Optional, List, Dict, Tuple, Set
@@ -26,7 +27,12 @@ from classify_cache import ClassifyCache
 from copy_doc import FeishuWikiCopier
 from create_feishu_node import FeishuNodeCreator
 from feishu_title_check import FolderNameChecker
-from llm_tree_classifier import LLMTreeClassifier
+from llm_tree_classifier import (
+    EXCLUDED_REPORT_TYPES,
+    LLMTreeClassifier,
+    excluded_report_category,
+    is_excluded_report_tag,
+)
 from read_feishu_doc import FeishuDocumentReader
 from run_logging import setup_run_log
 from scan_snapshot import ScanSnapshot
@@ -262,25 +268,26 @@ def batch_read_contents(
     reader: FeishuDocumentReader,
     workers: int,
     progress_interval: int = PROGRESS_INTERVAL,
-) -> Dict[str, Tuple[str, Optional[str]]]:
-    """并行读取文档，返回 obj_token -> (title, content)"""
-    results: Dict[str, Tuple[str, Optional[str]]] = {}
+) -> Dict[str, Tuple[str, Optional[str], str]]:
+    """并行读取文档，返回 obj_token -> (title, content, source_path)"""
+    results: Dict[str, Tuple[str, Optional[str], str]] = {}
     total = len(docs)
     done = 0
     ok = 0
     lock = threading.Lock()
     start_time = datetime.now()
 
-    def _read_one(doc: Dict) -> Tuple[str, str, Optional[str]]:
+    def _read_one(doc: Dict) -> Tuple[str, str, Optional[str], str]:
         obj_token = doc.get("obj_token") or doc["node_token"]
         node_token = doc["node_token"]
         title = doc["title"]
+        source_path = doc.get("source_path") or ""
         content = reader.get_raw_content(obj_token, wiki_node_token=node_token)
-        return obj_token, title, content
+        return obj_token, title, content, source_path
 
-    def _on_done(obj_token: str, title: str, content: Optional[str]) -> None:
+    def _on_done(obj_token: str, title: str, content: Optional[str], source_path: str) -> None:
         nonlocal done, ok
-        results[obj_token] = (title, content)
+        results[obj_token] = (title, content, source_path)
         with lock:
             done += 1
             if has_body_content(content):
@@ -293,8 +300,8 @@ def batch_read_contents(
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {executor.submit(_read_one, doc): doc for doc in docs}
         for future in as_completed(futures):
-            obj_token, title, content = future.result()
-            _on_done(obj_token, title, content)
+            obj_token, title, content, source_path = future.result()
+            _on_done(obj_token, title, content, source_path)
 
     print()
     elapsed = (datetime.now() - start_time).total_seconds()
@@ -306,18 +313,18 @@ def batch_read_contents(
 
 
 def batch_classify_documents(
-    read_results: Dict[str, Tuple[str, Optional[str]]],
+    read_results: Dict[str, Tuple[str, Optional[str], str]],
     classifier: LLMTreeClassifier,
     workers: int,
     progress_interval: int = PROGRESS_INTERVAL,
 ) -> Dict[str, Optional[Dict]]:
     """并行 AI 分类，返回 obj_token -> tag（失败或空内容为 None）"""
     tags: Dict[str, Optional[Dict]] = {}
-    to_classify: List[Tuple[str, Tuple[str, Optional[str]]]] = []
+    to_classify: List[Tuple[str, Tuple[str, Optional[str], str]]] = []
     empty_skip = 0
 
     for obj_token, item in read_results.items():
-        title, content = item
+        title, content, source_path = item
         if not has_body_content(content):
             tags[obj_token] = None
             empty_skip += 1
@@ -328,6 +335,7 @@ def batch_classify_documents(
     done = 0
     ok = 0
     cached = 0
+    excluded = 0
     lock = threading.Lock()
     start_time = datetime.now()
 
@@ -336,22 +344,40 @@ def batch_classify_documents(
         f"合计: {len(read_results)}"
     )
 
-    def _classify_one(item: Tuple[str, Tuple[str, Optional[str]]]) -> Tuple[str, Optional[Dict], bool]:
-        obj_token, (title, content) = item
+    def _classify_one(item: Tuple[str, Tuple[str, Optional[str], str]]) -> Tuple[str, Optional[Dict], bool]:
+        obj_token, (title, content, source_path) = item
         from_cache = False
         if classifier.cache and obj_token:
             cached_tag = classifier.cache.get(obj_token, content or "")
             if cached_tag is not None:
-                return obj_token, cached_tag, True
-        tag = classifier.classify(content, obj_token=obj_token, title=title)
+                if is_excluded_report_tag(cached_tag):
+                    return obj_token, cached_tag, True
+                cached_path = classifier._tag_to_path(cached_tag)
+                domain_hint = classifier.detect_source_domain_hint(source_path)
+                if (
+                    classifier._is_leaf_path(cached_path)
+                    and (
+                        not domain_hint
+                        or classifier._path_under_domain(cached_path, domain_hint)
+                    )
+                ):
+                    return obj_token, cached_tag, True
+        tag = classifier.classify(
+            content,
+            obj_token=obj_token,
+            title=title,
+            source_path=source_path,
+        )
         return obj_token, tag, from_cache
 
     def _on_done(obj_token: str, tag: Optional[Dict], from_cache: bool) -> None:
-        nonlocal done, ok, cached
+        nonlocal done, ok, cached, excluded
         tags[obj_token] = tag
         with lock:
             done += 1
-            if tag:
+            if is_excluded_report_tag(tag):
+                excluded += 1
+            elif tag:
                 ok += 1
             if from_cache:
                 cached += 1
@@ -361,9 +387,9 @@ def batch_classify_documents(
                     done,
                     total,
                     ok,
-                    done - ok,
+                    done - ok - excluded,
                     start_time,
-                    extra=f"缓存命中: {cached}",
+                    extra=f"缓存命中: {cached} | 排除类: {excluded}",
                 )
 
     if not to_classify:
@@ -379,7 +405,8 @@ def batch_classify_documents(
     print()
     elapsed = (datetime.now() - start_time).total_seconds()
     print(
-        f"🤖 分类汇总: 成功 {ok}/{total} | 失败 {total - ok} | "
+        f"🤖 分类汇总: 成功 {ok}/{total} | 排除类 {excluded} | "
+        f"失败 {total - ok - excluded} | "
         f"缓存命中 {cached} | 空文档跳过 {empty_skip} | 耗时 {elapsed / 60:.1f} 分钟"
     )
     return tags
@@ -588,6 +615,48 @@ def copy_document(
         print(f"❌ 复制文档异常: {e}")
         return None
 
+def save_excluded_reports(
+    excluded_by_category: Dict[str, List[str]],
+    log_dir: str,
+) -> Optional[str]:
+    """Write excluded report document names to logs/excluded_reports.json."""
+    total = sum(len(titles) for titles in excluded_by_category.values())
+    if total == 0:
+        return None
+
+    import os
+
+    os.makedirs(log_dir, exist_ok=True)
+    out_path = os.path.join(log_dir, "excluded_reports.json")
+    payload = {
+        "run_at": datetime.now().isoformat(),
+        "total": total,
+        "by_category": {
+            cat: {"count": len(excluded_by_category.get(cat, [])), "titles": excluded_by_category.get(cat, [])}
+            for cat in EXCLUDED_REPORT_TYPES
+            if excluded_by_category.get(cat)
+        },
+    }
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    return out_path
+
+def print_excluded_reports_summary(excluded_by_category: Dict[str, List[str]]) -> int:
+    """Print excluded report counts and titles; return total excluded."""
+    total = sum(len(titles) for titles in excluded_by_category.values())
+    if total == 0:
+        return 0
+
+    print(f"\n📋 排除类文档（不分类、不复制）: 共 {total} 个")
+    for category in EXCLUDED_REPORT_TYPES:
+        titles = excluded_by_category.get(category, [])
+        if not titles:
+            continue
+        print(f"\n   【{category}】 {len(titles)} 个:")
+        for name in titles:
+            print(f"      - {name}")
+    return total
+
 # ============================================================
 # 主函数
 # ============================================================
@@ -602,7 +671,8 @@ def main():
     
     print("\n📋 配置信息:")
     print(f"   - 扫描目录token: {SCAN_ROOT_TOKEN}")
-    print(f"   - 目标目录: {TARGET_ROOT_NAME}")
+    target_label = TARGET_ROOT_NAME or TARGET_PARENT_TOKEN or "(未配置)"
+    print(f"   - 目标目录: {target_label}")
     print(f"   - 使用缓存: {USE_CACHE}")
     print(f"   - 最大文档数: {MAX_DOCUMENTS if MAX_DOCUMENTS else '无限制'}")
     print(f"   - 并行读取: {READ_WORKERS} | 并行分类: {CLASSIFY_WORKERS} | LLM重试: {LLM_MAX_RETRIES}")
@@ -754,6 +824,8 @@ def main():
     fail_count = 0
     skip_count = 0
     empty_content_skip = 0
+    excluded_report_skip = 0
+    excluded_by_category: Dict[str, List[str]] = defaultdict(list)
     duplicate_skip = 0
     claim_busy_skip = 0
     local_resume_skip = 0
@@ -799,29 +871,56 @@ def main():
         )
         skip_count += intra_scan_dedup
 
-    read_results: Dict[str, Tuple[str, Optional[str]]] = {}
+    read_results: Dict[str, Tuple[str, Optional[str], str]] = {}
     classify_results: Dict[str, Optional[Dict]] = {}
 
-    if unique_docs:
+    docs_to_read: List[Dict] = []
+    for doc in unique_docs:
+        title = doc.get("title") or ""
+        obj_token = doc.get("obj_token") or doc["node_token"]
+        source_path = doc.get("source_path") or ""
+        skip_cat = classifier.detect_excluded_report(title=title, content=None)
+        if skip_cat:
+            read_results[obj_token] = (title, "", source_path)
+            classify_results[obj_token] = classifier.make_excluded_tag(skip_cat)
+        else:
+            docs_to_read.append(doc)
+
+    title_excluded_count = len(read_results)
+    if title_excluded_count:
         print(
-            f"\n📖 并行读取 {len(unique_docs)} 个唯一文档 "
+            f"\n⏭️ 标题预检排除类文档: {title_excluded_count} 个"
+            f"（跳过读取与 LLM 分类）"
+        )
+        by_cat: Dict[str, int] = defaultdict(int)
+        for tag in classify_results.values():
+            if is_excluded_report_tag(tag):
+                by_cat[excluded_report_category(tag)] += 1
+        for cat in EXCLUDED_REPORT_TYPES:
+            if by_cat.get(cat):
+                print(f"   - {cat}: {by_cat[cat]} 个")
+
+    if docs_to_read:
+        print(
+            f"\n📖 并行读取 {len(docs_to_read)} 个唯一文档 "
             f"(workers={READ_WORKERS})..."
         )
         t_read = datetime.now()
-        read_results = batch_read_contents(unique_docs, reader, READ_WORKERS)
+        fetched = batch_read_contents(docs_to_read, reader, READ_WORKERS)
+        read_results.update(fetched)
         print(f"✅ 读取完成，耗时 {(datetime.now() - t_read).total_seconds():.1f}s")
 
         print(f"\n🤖 并行 AI 分类 (workers={CLASSIFY_WORKERS})...")
         t_cls = datetime.now()
-        classify_results = batch_classify_documents(
-            read_results, classifier, CLASSIFY_WORKERS
+        classify_results.update(
+            batch_classify_documents(fetched, classifier, CLASSIFY_WORKERS)
         )
         print(f"✅ 分类完成，耗时 {(datetime.now() - t_cls).total_seconds():.1f}s")
 
     total_unique = len(read_results)
     processed_in_run = 0
 
-    for obj_token, (doc_title, content) in read_results.items():
+    for obj_token, (doc_title, content, source_path) in read_results.items():
         docs = obj_groups.get(obj_token, [])
         if not docs:
             continue
@@ -830,6 +929,18 @@ def main():
         node_tokens = {doc["node_token"] for doc in docs}
         processed_in_run += 1
         idx = processed_in_run
+
+        tag = classify_results.get(obj_token)
+        if is_excluded_report_tag(tag):
+            category = excluded_report_category(tag)
+            excluded_by_category[category].append(doc_title)
+            excluded_report_skip += 1
+            skip_count += 1
+            print(
+                f"\n[{idx}/{total_unique}] ⏭️ 排除类（{category}），跳过: {doc_title}"
+            )
+            processed_tokens.update(node_tokens)
+            continue
 
         if not has_body_content(content):
             print(
@@ -840,7 +951,6 @@ def main():
             processed_tokens.update(node_tokens)
             continue
 
-        tag = classify_results.get(obj_token)
         if not tag:
             print(f"\n[{idx}/{total_unique}] ❌ 分类失败，跳过: {doc_title}")
             fail_count += 1
@@ -903,6 +1013,7 @@ def main():
             f"\n📈 进度: {processed_in_run}/{total_unique} | "
             f"本次新复制: {new_copy_count} | 失败: {fail_count} | "
             f"跳过: {skip_count}（含正文空 {empty_content_skip}、"
+            f"排除类 {excluded_report_skip}、"
             f"全局去重 {duplicate_skip}、并发占用 {claim_busy_skip}）"
         )
         if remaining > 0:
@@ -942,6 +1053,12 @@ def main():
         print(f"   - 其中并发占用跳过: {claim_busy_skip}")
     if empty_content_skip:
         print(f"   - 其中正文为空跳过: {empty_content_skip}")
+    if excluded_report_skip:
+        print(f"   - 其中排除类跳过: {excluded_report_skip}")
+        for category in EXCLUDED_REPORT_TYPES:
+            n = len(excluded_by_category.get(category, []))
+            if n:
+                print(f"      · {category}: {n} 个")
     if new_copy_count + fail_count > 0:
         print(
             f"   - 本次复制成功率: "
@@ -959,6 +1076,11 @@ def main():
     print("="*60)
     
     save_processing_progress(processed_tokens)
+
+    print_excluded_reports_summary(excluded_by_category)
+    excluded_path = save_excluded_reports(excluded_by_category, LOG_DIR)
+    if excluded_path:
+        print(f"📄 排除类文档清单已保存: {excluded_path}")
 
     if scan_snapshot and all_documents:
         scan_snapshot.save_scan(
