@@ -59,6 +59,9 @@ MAX_DOCUMENTS = _env_int("MAX_DOCUMENTS", 0) or None
 ENABLE_TAG_ADD = _env_bool("ENABLE_TAG_ADD", True)
 SAVE_PROGRESS = _env_bool("SAVE_PROGRESS", True)
 FORCE_RESCAN = _env_bool("FORCE_RESCAN", False)
+ENABLE_SCAN_SNAPSHOT = _env_bool("ENABLE_SCAN_SNAPSHOT", True)
+SCAN_SNAPSHOT_DB = _env("SCAN_SNAPSHOT_DB") or "scan_snapshot.db"
+FULL_SCAN_CALIBRATION_DAYS = _env_int("FULL_SCAN_CALIBRATION_DAYS", 7)
 SAVE_RUN_LOG = _env_bool("SAVE_RUN_LOG", True)
 LOG_DIR = _env("LOG_DIR", "logs") or "logs"
 

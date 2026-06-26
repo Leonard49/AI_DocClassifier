@@ -25,8 +25,7 @@ class FeishuNodeCreator:
             node_token: 为空字符串则创建
             title: 节点标题     
         Returns:
-            成功时返回 (response_data, new_node_token)
-            失败时返回 response_data
+            (response_data, new_node_token, new_title)；失败时 token/title 为 None
         """
         url = f"https://open.feishu.cn/open-apis/wiki/v2/spaces/{self.space_id}/nodes"
         headers = self._get_headers()
@@ -63,6 +62,6 @@ class FeishuNodeCreator:
             return (response_data, new_node_token,new_title)
         else:
             print(f"节点创建失败: {response_data.get('msg', '未知错误')}")
-            return response_data, None
+            return response_data, None, None
 
 

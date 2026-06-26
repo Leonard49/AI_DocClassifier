@@ -29,6 +29,7 @@ from feishu_title_check import FolderNameChecker
 from llm_tree_classifier import LLMTreeClassifier
 from read_feishu_doc import FeishuDocumentReader
 from run_logging import setup_run_log
+from scan_snapshot import ScanSnapshot
 from shared_state import SharedCopyState, default_worker_id
 from token_manager import TokenManager
 from wiki_scanner import SimpleWikiScanner
@@ -46,6 +47,9 @@ MAX_DOCUMENTS = config.MAX_DOCUMENTS
 ENABLE_TAG_ADD = config.ENABLE_TAG_ADD
 SAVE_PROGRESS = config.SAVE_PROGRESS
 FORCE_RESCAN = config.FORCE_RESCAN
+ENABLE_SCAN_SNAPSHOT = config.ENABLE_SCAN_SNAPSHOT
+SCAN_SNAPSHOT_DB = config.SCAN_SNAPSHOT_DB
+FULL_SCAN_CALIBRATION_DAYS = config.FULL_SCAN_CALIBRATION_DAYS
 SAVE_RUN_LOG = config.SAVE_RUN_LOG
 LOG_DIR = config.LOG_DIR
 READ_WORKERS = config.READ_WORKERS
@@ -605,6 +609,11 @@ def main():
     print(f"   - LLM 模型: {LLM_MODEL} | 网关: {LLM_BASE_URL}")
     print(f"   - 分类正文上限: {CLASSIFY_MAX_CHARS} 字符 | 分类缓存: {USE_CLASSIFY_CACHE}")
     print(f"   - 多人并行去重: {ENABLE_SHARED_DEDUP}")
+    if ENABLE_SCAN_SNAPSHOT:
+        print(
+            f"   - 扫描快照增量: 开启 | 校准周期: "
+            f"{FULL_SCAN_CALIBRATION_DAYS} 天 | DB: {SCAN_SNAPSHOT_DB}"
+        )
     if ENABLE_SHARED_DEDUP:
         print(f"   - 共享状态库: {SHARED_STATE_DB}")
         print(f"   - Worker ID: {WORKER_ID or '(自动生成)'}")
@@ -706,6 +715,34 @@ def main():
     if MAX_DOCUMENTS:
         all_documents = all_documents[:MAX_DOCUMENTS]
         print(f"⚠️ 测试模式：只处理前 {MAX_DOCUMENTS} 个文档")
+
+    scan_snapshot: Optional[ScanSnapshot] = None
+    snapshot_delta_tokens: Set[str] = set()
+    snapshot_calibration = False
+    if ENABLE_SCAN_SNAPSHOT and scan_root_token:
+        scan_snapshot = ScanSnapshot(
+            SCAN_SNAPSHOT_DB,
+            space_id=SPACE_ID,
+            scan_root=scan_root_token,
+        )
+        snapshot_calibration = (
+            FORCE_RESCAN
+            or not scan_snapshot.has_baseline()
+            or scan_snapshot.needs_full_calibration(FULL_SCAN_CALIBRATION_DAYS)
+        )
+        if snapshot_calibration:
+            reason = "FORCE_RESCAN" if FORCE_RESCAN else (
+                "首次基线" if not scan_snapshot.has_baseline()
+                else f"超过 {FULL_SCAN_CALIBRATION_DAYS} 天未全量校准"
+            )
+            print(f"\n📸 扫描快照: 全量校准模式（{reason}）")
+        else:
+            snapshot_delta_tokens = scan_snapshot.delta_node_tokens(all_documents)
+            last_scan, last_cal, known = scan_snapshot.summary()
+            print(f"\n📸 扫描快照: 增量模式")
+            print(f"   - 快照已知叶子: {known} | 上次扫描: {last_scan or '无'}")
+            print(f"   - 上次全量校准: {last_cal or '无'}")
+            print(f"   - 本次新增叶子: {len(snapshot_delta_tokens)} 个")
     
     # 5. 加载处理进度
     processed_tokens = load_processing_progress()
@@ -725,19 +762,29 @@ def main():
         shared_state.copied_obj_tokens() if shared_state else set()
     )
 
+    use_snapshot_filter = (
+        ENABLE_SCAN_SNAPSHOT
+        and scan_snapshot is not None
+        and not snapshot_calibration
+    )
+
     pending_docs: List[Dict] = []
     for doc in all_documents:
-        if doc["node_token"] in processed_tokens:
-            local_resume_skip += 1
-            continue
+        node_token = doc["node_token"]
+        if node_token in processed_tokens:
+            if not use_snapshot_filter or node_token not in snapshot_delta_tokens:
+                local_resume_skip += 1
+                continue
         obj_token = doc.get("obj_token") or doc["node_token"]
         if obj_token in global_copied:
             duplicate_skip += 1
-            processed_tokens.add(doc["node_token"])
+            processed_tokens.add(node_token)
             continue
         pending_docs.append(doc)
 
     skip_count = local_resume_skip + duplicate_skip
+    if use_snapshot_filter:
+        print(f"   - 待处理（含新增与失败重试）: {len(pending_docs)} 个")
     if local_resume_skip:
         print(f"⏭️ 跳过本地已处理节点: {local_resume_skip} 个")
     if duplicate_skip:
@@ -912,6 +959,12 @@ def main():
     print("="*60)
     
     save_processing_progress(processed_tokens)
+
+    if scan_snapshot and all_documents:
+        scan_snapshot.save_scan(
+            all_documents,
+            full_calibration=snapshot_calibration,
+        )
 
 if __name__ == "__main__":
     try:
