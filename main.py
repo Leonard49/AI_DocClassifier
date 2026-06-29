@@ -615,6 +615,41 @@ def copy_document(
         print(f"❌ 复制文档异常: {e}")
         return None
 
+def save_classification_failures(
+    failures: List[Dict[str, str]],
+    log_dir: str,
+) -> Optional[str]:
+    """Write classification-failed documents (title + source path) to JSON."""
+    if not failures:
+        return None
+
+    import os
+
+    os.makedirs(log_dir, exist_ok=True)
+    out_path = os.path.join(log_dir, "classification_failures.json")
+    payload = {
+        "run_at": datetime.now().isoformat(),
+        "total": len(failures),
+        "documents": failures,
+    }
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    return out_path
+
+
+def print_classification_failures_summary(failures: List[Dict[str, str]]) -> int:
+    """Print classification failure titles and source paths."""
+    if not failures:
+        return 0
+
+    print(f"\n📋 分类失败文档: 共 {len(failures)} 个")
+    for item in failures:
+        path = item.get("source_path") or "(无来源路径)"
+        print(f"   - {item.get('title', '')}")
+        print(f"     路径: {path}")
+    return len(failures)
+
+
 def save_excluded_reports(
     excluded_by_category: Dict[str, List[str]],
     log_dir: str,
@@ -826,6 +861,7 @@ def main():
     empty_content_skip = 0
     excluded_report_skip = 0
     excluded_by_category: Dict[str, List[str]] = defaultdict(list)
+    classification_failures: List[Dict[str, str]] = []
     duplicate_skip = 0
     claim_busy_skip = 0
     local_resume_skip = 0
@@ -952,7 +988,18 @@ def main():
             continue
 
         if not tag:
+            doc_source_path = source_path or representative.get("source_path") or ""
+            classification_failures.append(
+                {
+                    "title": doc_title,
+                    "source_path": doc_source_path,
+                    "node_token": node_token,
+                    "obj_token": obj_token,
+                }
+            )
             print(f"\n[{idx}/{total_unique}] ❌ 分类失败，跳过: {doc_title}")
+            if doc_source_path:
+                print(f"   来源路径: {doc_source_path}")
             fail_count += 1
             continue
 
@@ -1059,6 +1106,8 @@ def main():
             n = len(excluded_by_category.get(category, []))
             if n:
                 print(f"      · {category}: {n} 个")
+    if classification_failures:
+        print(f"   - 其中分类失败: {len(classification_failures)} 个")
     if new_copy_count + fail_count > 0:
         print(
             f"   - 本次复制成功率: "
@@ -1081,6 +1130,11 @@ def main():
     excluded_path = save_excluded_reports(excluded_by_category, LOG_DIR)
     if excluded_path:
         print(f"📄 排除类文档清单已保存: {excluded_path}")
+
+    print_classification_failures_summary(classification_failures)
+    classify_fail_path = save_classification_failures(classification_failures, LOG_DIR)
+    if classify_fail_path:
+        print(f"📄 分类失败清单已保存: {classify_fail_path}")
 
     if scan_snapshot and all_documents:
         scan_snapshot.save_scan(
