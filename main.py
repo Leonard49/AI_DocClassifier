@@ -346,12 +346,25 @@ def batch_classify_documents(
 
     def _classify_one(item: Tuple[str, Tuple[str, Optional[str], str]]) -> Tuple[str, Optional[Dict], bool]:
         obj_token, (title, content, source_path) = item
+        skip_category = classifier.detect_excluded_report(
+            title, content, source_path
+        )
+        if skip_category:
+            return obj_token, classifier.make_excluded_tag(skip_category), False
+
         from_cache = False
         if classifier.cache and obj_token:
             cached_tag = classifier.cache.get(obj_token, content or "")
             if cached_tag is not None:
                 if is_excluded_report_tag(cached_tag):
                     return obj_token, cached_tag, True
+                path_skip = classifier.detect_excluded_report(title, None, source_path)
+                if path_skip:
+                    return (
+                        obj_token,
+                        classifier.make_excluded_tag(path_skip),
+                        False,
+                    )
                 cached_path = classifier._tag_to_path(cached_tag)
                 domain_hint = classifier.detect_source_domain_hint(source_path)
                 if (
@@ -915,7 +928,9 @@ def main():
         title = doc.get("title") or ""
         obj_token = doc.get("obj_token") or doc["node_token"]
         source_path = doc.get("source_path") or ""
-        skip_cat = classifier.detect_excluded_report(title=title, content=None)
+        skip_cat = classifier.detect_excluded_report(
+            title=title, content=None, source_path=source_path
+        )
         if skip_cat:
             read_results[obj_token] = (title, "", source_path)
             classify_results[obj_token] = classifier.make_excluded_tag(skip_cat)

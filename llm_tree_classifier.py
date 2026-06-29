@@ -40,8 +40,12 @@ EXCLUDED_REPORT_TITLE_PATTERNS: Dict[str, List[str]] = {
     "客户问题跟踪": [
         r"issue\s*tracking",
         r"key\s*customer\s*issue",
+        r"key\s*customer",
         r"customer\s*issue",
+        r"customer\s*tracking",
         r"客户问题跟踪",
+        r"重点客户跟踪",
+        r"重点客户",
         r"问题跟踪",
     ],
     "会议纪要": [
@@ -221,7 +225,7 @@ class LLMTreeClassifier:
         ("Cellular -> 认证", "AT&T"): ["at&t"],
         ("Cellular -> 认证", "Verizon"): ["verizon"],
         ("周会通", "会议纪要"): ["会议", "meeting", "纪要"],
-        ("周会通", "周报"): ["周报", "weekly", "重点客户", "工作分享"],
+        ("周会通", "周报"): ["周报", "weekly", "工作分享"],
         ("周会通", "通知类"): ["通知", "notice"],
         ("Antenna", "PCB Antenna"): ["pcb"],
     }
@@ -630,7 +634,8 @@ class LLMTreeClassifier:
    - 周报：Weekly Report、Weekly Work Report、工作周报、Daily&Weekly Work Report 等周期性工作汇报
    - 日报：Daily Report、Daily Work Report、每日工作汇报
    - 会议纪要：Meeting Minutes、会议记录、会议纪要
-   - 客户问题跟踪：Issue Tracking、Key Customer Issue Tracking、Customer Issue Tracking、客户问题跟踪
+   - 客户问题跟踪：Issue Tracking、Key Customer Issue Tracking、Customer Issue Tracking、
+     客户问题跟踪、重点客户跟踪、重点客户（含来源路径在「XX02 重点客户跟踪」文件夹下的文档）
 
    即使标签树中存在「周会通 -> 周报/会议纪要」，上述类型也必须输出 SKIP:... 而非树路径。
 
@@ -856,20 +861,22 @@ Others
         self,
         title: Optional[str] = None,
         content: Optional[str] = None,
+        source_path: Optional[str] = None,
     ) -> Optional[str]:
         """
         Detect weekly/daily reports, meeting minutes, or issue-tracking docs.
         Returns category name if the document should be skipped without LLM classify.
+        Checks title, source wiki path, and (when provided) content head.
         """
         title_text = (title or "").strip()
+        source_text = (source_path or "").strip()
         content_head = (content or "")[:800].strip()
         for category in EXCLUDED_REPORT_TYPES:
             patterns = EXCLUDED_REPORT_TITLE_PATTERNS.get(category, [])
             for pattern in patterns:
-                if title_text and re.search(pattern, title_text, re.IGNORECASE):
-                    return category
-                if content_head and re.search(pattern, content_head, re.IGNORECASE):
-                    return category
+                for text in (title_text, source_text, content_head):
+                    if text and re.search(pattern, text, re.IGNORECASE):
+                        return category
         return None
 
     def _parse_skip_response(self, raw: str) -> Optional[str]:
@@ -967,7 +974,7 @@ Others
         if not (content or "").strip():
             return None
 
-        skip_category = self.detect_excluded_report(title, content)
+        skip_category = self.detect_excluded_report(title, content, source_path)
         if skip_category:
             if self.verbose:
                 print(f"⏭️ 排除类文档（{skip_category}），跳过分类: {title or obj_token}")
@@ -982,6 +989,12 @@ Others
                     if self.verbose:
                         print(f"📦 使用排除类缓存: {obj_token}")
                     return cached
+                path_skip = self.detect_excluded_report(title, None, source_path)
+                if path_skip:
+                    excluded = self.make_excluded_tag(path_skip)
+                    if self.verbose:
+                        print(f"📦 忽略旧分类缓存（来源/标题为排除类）: {obj_token}")
+                    return excluded
                 cached_path = self._tag_to_path(cached)
                 if self._is_leaf_path(cached_path):
                     if domain_hint and not self._path_under_domain(cached_path, domain_hint):
@@ -1017,6 +1030,20 @@ Others
             path_str = self._validate_path(raw_path)
             if not self._is_leaf_path(path_str):
                 path_str = self._refine_to_leaf_path(path_str, truncated)
+            if path_str.startswith("周会通") and (
+                skip := self.detect_excluded_report(title, None, source_path)
+            ):
+                if self.verbose:
+                    print(
+                        f"⏭️ 标题/来源为排除类，忽略 LLM 周会通路径: {title or obj_token}"
+                    )
+                result = self.make_excluded_tag(skip)
+                if self.cache and obj_token:
+                    try:
+                        self.cache.set(obj_token, content or "", result)
+                    except Exception as cache_exc:
+                        print(f"警告: 分类缓存写入失败: {cache_exc}")
+                return result
             if domain_hint:
                 path_str = self._enforce_domain_hint(path_str, domain_hint, truncated)
             result = self._path_to_json(path_str)
