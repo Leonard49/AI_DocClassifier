@@ -31,14 +31,16 @@
 本系统自动整理飞书知识库文档：
 
 1. 在**源目录**（`SCAN_ROOT_TOKEN`）下 BFS 扫描**叶子 docx**（`has_child=false`）
-2. 读取正文，调用 **LLM**（经 OpenAI 兼容网关，默认 `deepseek-v4-flash`）按预定义标签树分类
-3. 在**目标目录**（`TARGET_PARENT_TOKEN`）下按分类创建文件夹并**复制**文档
-4. 可选：在**原文档**插入分类标签块（`ENABLE_TAG_ADD`）
+2. 可选：将文档内 **PDF/Word/PPT 附件**提取为文本写回源文档（`ENABLE_ATTACHMENT_EXTRACT`）
+3. 读取正文，调用 **LLM**（经 OpenAI 兼容网关，默认 `deepseek-v4-flash`）按预定义标签树分类
+4. 在**目标目录**（`TARGET_PARENT_TOKEN`）下按分类创建文件夹并**复制**文档
+5. 可选：在**原文档**插入分类标签块（`ENABLE_TAG_ADD`）
 
 ### 1.2 架构特点
 
 ```
 扫描（单线程 BFS）
+  → [可选] 附件提取写回源文档（PDF/Word/PPT）
   → 并行读取正文（READ_WORKERS，飞书限速）
   → 并行 AI 分类（CLASSIFY_WORKERS，LLM 全局并发≤2）
   → 串行复制 + 打标（避免飞书写冲突）
@@ -47,10 +49,14 @@
 
 ### 1.3 分支说明
 
+详见 [docs/BRANCHES.md](BRANCHES.md)。
+
 | 分支 | 说明 |
 |------|------|
 | `master` | 早期单机版本 |
-| **`feature/multi-worker-parallel`** | 当前主开发分支：多人并行、`obj_token` 去重、目标目录验证统计、共享库容错 |
+| `feature/multi-worker-parallel` | 多人并行、共享去重、目标目录验证统计 |
+| `feature/scan-snapshot-plan-b` | 扫描快照增量、排除类规则、分类失败清单 |
+| **`feature/attachment-extract`** | **附件提取合入主流程（当前推荐）** |
 
 ---
 
@@ -63,6 +69,8 @@
 | Token | `token_manager.py` | 飞书 `tenant_access_token` 自动刷新 |
 | 扫描 | `wiki_scanner.py` | BFS 遍历 wiki，仅收集叶子 docx；可选扫描缓存 |
 | 读文档 | `read_feishu_doc.py` | 调用 docx API 获取正文；限流重试 |
+| **附件提取** | **`attachment_extractor.py`** | PDF/Word/PPT 附件转文本写回源文档（可开关） |
+| 附件格式 | `attachment_extractors/` | PDF / Word / PPT 提取器实现 |
 | 分类 | `llm_tree_classifier.py` | 标签树 + LLM 分类（`LLM_MODEL` 可配置） |
 | 分类缓存 | `classify_cache.py` | SQLite 缓存分类结果（按 `obj_token` + 内容 hash） |
 | **共享去重** | **`shared_state.py`** | 跨 worker 的 `obj_token` 复制注册表（SQLite） |
@@ -107,6 +115,18 @@
 | 1 | `node_token` 在 `processing_progress.json` | 本机断点续跑（按 `SCAN_ROOT_TOKEN` 区分） |
 | 2 | `obj_token` 在 `shared_copy_state.db` 且 status=copied | 全局已复制（多人并行） |
 | 3 | 同一扫描内重复 `obj_token` | 快捷方式/重复引用合并为一次 |
+
+### 步骤 5a：附件提取（可选）
+
+当 `ENABLE_ATTACHMENT_EXTRACT=true` 时，在读取正文之前执行：
+
+1. 扫描待处理 docx 的 blocks，识别 PDF / Word / PPT 附件（`block_type=23`）
+2. 下载附件 → 提取文本（及图片）→ 以 `附件：{文件名}` 标题写回源文档
+3. 已存在同名标题的附件跳过（防重复）
+4. 输出进度、汇总统计，并写入 `logs/attachment_extract.json`
+
+**依赖：** `PyMuPDF`、`python-docx`、`lxml`、`python-pptx`  
+**权限：** 需对源文档具备编辑权限（写入 docx 块、下载附件）
 
 ### 步骤 6：并行读取 + 并行分类
 
@@ -254,6 +274,7 @@ READ_WORKERS=2
 | `SAVE_PROGRESS` | `true` | 保存本机进度到 `processing_progress.json` |
 | `FORCE_RESCAN` | `false` | 忽略 progress，全量重跑 |
 | `ENABLE_TAG_ADD` | `true` | 复制后在原文档插入标签块 |
+| `ENABLE_ATTACHMENT_EXTRACT` | `false` | 将 PDF/Word/PPT 附件提取为文本写回源文档 |
 | `MAX_DOCUMENTS` | 无限制 | 测试用：只处理前 N 篇 |
 | `SAVE_RUN_LOG` | `true` | 日志写入 `logs/` |
 
@@ -327,7 +348,11 @@ READ_WORKERS=2
 | `classify_cache.db` | `USE_CLASSIFY_CACHE=true` | AI 分类缓存 | 忽略 |
 | `wiki_scan_cache.db` | `USE_CACHE=true` | 扫描 BFS 断点 | 忽略 |
 | `scanned_documents_*.json` | `USE_CACHE=true` | 扫描结果快照 | 忽略 |
+| `scan_snapshot.db` | `ENABLE_SCAN_SNAPSHOT=true` | 扫描快照（Plan B 增量） | 忽略 |
 | `logs/latest.log` | `SAVE_RUN_LOG=true` | 运行日志 | 忽略 |
+| `logs/attachment_extract.json` | 附件提取开启且有结果 | 附件提取统计与失败清单 | 忽略 |
+| `logs/excluded_reports.json` | 每次运行 | 排除类文档清单 | 忽略 |
+| `logs/classification_failures.json` | 有分类失败时 | 分类失败文档清单 | 忽略 |
 
 ### 重置测试环境
 

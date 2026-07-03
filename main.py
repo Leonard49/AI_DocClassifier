@@ -22,6 +22,11 @@ from datetime import datetime
 from typing import Optional, List, Dict, Tuple, Set
 
 import config
+from attachment_extractor import (
+    AttachmentExtractor,
+    print_attachment_summary,
+    save_attachment_report,
+)
 from add_tag_block import FeishuDocumentTagAdder
 from classify_cache import ClassifyCache
 from copy_doc import FeishuWikiCopier
@@ -51,6 +56,7 @@ FALLBACK_PARENT_TOKEN = config.FALLBACK_PARENT_TOKEN
 USE_CACHE = config.USE_CACHE
 MAX_DOCUMENTS = config.MAX_DOCUMENTS
 ENABLE_TAG_ADD = config.ENABLE_TAG_ADD
+ENABLE_ATTACHMENT_EXTRACT = config.ENABLE_ATTACHMENT_EXTRACT
 SAVE_PROGRESS = config.SAVE_PROGRESS
 FORCE_RESCAN = config.FORCE_RESCAN
 ENABLE_SCAN_SNAPSHOT = config.ENABLE_SCAN_SNAPSHOT
@@ -726,6 +732,7 @@ def main():
     print(f"   - 并行读取: {READ_WORKERS} | 并行分类: {CLASSIFY_WORKERS} | LLM重试: {LLM_MAX_RETRIES}")
     print(f"   - LLM 模型: {LLM_MODEL} | 网关: {LLM_BASE_URL}")
     print(f"   - 分类正文上限: {CLASSIFY_MAX_CHARS} 字符 | 分类缓存: {USE_CLASSIFY_CACHE}")
+    print(f"   - 附件提取转文本: {'开启' if ENABLE_ATTACHMENT_EXTRACT else '关闭'}")
     print(f"   - 多人并行去重: {ENABLE_SHARED_DEDUP}")
     if ENABLE_SCAN_SNAPSHOT:
         print(
@@ -922,6 +929,7 @@ def main():
 
     read_results: Dict[str, Tuple[str, Optional[str], str]] = {}
     classify_results: Dict[str, Optional[Dict]] = {}
+    att_stats = None
 
     docs_to_read: List[Dict] = []
     for doc in unique_docs:
@@ -950,6 +958,25 @@ def main():
         for cat in EXCLUDED_REPORT_TYPES:
             if by_cat.get(cat):
                 print(f"   - {cat}: {by_cat[cat]} 个")
+
+    if ENABLE_ATTACHMENT_EXTRACT and docs_to_read:
+        print(
+            f"\n📎 步骤5a: 附件提取（PDF/Word/PPT → 文本写回文档）"
+            f" — 共 {len(docs_to_read)} 篇待检查..."
+        )
+        t_att = datetime.now()
+        att_extractor = AttachmentExtractor(token_manager)
+        att_stats, att_results = att_extractor.process_documents(
+            docs_to_read,
+            progress_interval=PROGRESS_INTERVAL,
+        )
+        print(
+            f"✅ 附件提取完成，耗时 {(datetime.now() - t_att).total_seconds():.1f}s"
+        )
+        print_attachment_summary(att_results, att_stats)
+        att_report_path = save_attachment_report(att_results, att_stats, LOG_DIR)
+        if att_report_path:
+            print(f"📄 附件提取清单已保存: {att_report_path}")
 
     if docs_to_read:
         print(
@@ -1123,6 +1150,11 @@ def main():
                 print(f"      · {category}: {n} 个")
     if classification_failures:
         print(f"   - 其中分类失败: {len(classification_failures)} 个")
+    if att_stats is not None:
+        print(
+            f"   - 附件提取: 检查 {att_stats.checked} | 含附件 {att_stats.with_attachments} | "
+            f"新提取文件 {att_stats.files_extracted} | 失败 {att_stats.files_failed}"
+        )
     if new_copy_count + fail_count > 0:
         print(
             f"   - 本次复制成功率: "
