@@ -1,8 +1,12 @@
-"""Word (.docx) attachment extractor."""
+"""Word (.doc / .docx) attachment extractor."""
 
 from __future__ import annotations
 
+import os
+import shutil
+
 from .base import BaseExtractor
+from .doc_convert import convert_doc_to_docx
 
 
 class WordExtractor(BaseExtractor):
@@ -18,20 +22,41 @@ class WordExtractor(BaseExtractor):
             )
             return
 
-        doc = Document(docx_path)
+        convert_dir: str | None = None
+        source_path = docx_path
+        if docx_path.lower().endswith(".doc"):
+            print("    转换 .doc → .docx ...")
+            source_path = convert_doc_to_docx(docx_path)
+            convert_dir = os.path.dirname(source_path)
+
+        try:
+            self._extract_docx(source_path, doc_token, root_block_id, Document)
+        finally:
+            if convert_dir and os.path.isdir(convert_dir):
+                shutil.rmtree(convert_dir, ignore_errors=True)
+
+    def _extract_docx(
+        self, docx_path: str, doc_token: str, root_block_id: str, document_cls
+    ) -> None:
+        doc = document_cls(docx_path)
         ns_w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
         ns_a = "http://schemas.openxmlformats.org/drawingml/2006/main"
         ns_r = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 
         image_cache = {}
         for rel_id, rel in doc.part.rels.items():
-            if "image" in rel.reltype:
-                image_cache[rel_id] = (
-                    rel.target_part.blob,
-                    rel.target_part.partname.split(".")[-1],
-                )
+            if "image" not in rel.reltype:
+                continue
+            if getattr(rel, "is_external", False):
+                continue
+            try:
+                blob = rel.target_part.blob
+                ext = rel.target_part.partname.split(".")[-1]
+            except AttributeError:
+                continue
+            image_cache[rel_id] = (blob, ext)
 
-        blocks = []
+        blocks: list = []
         body = doc.element.body
 
         for child in body:

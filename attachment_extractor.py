@@ -29,6 +29,49 @@ EXT_TO_KIND = {
     ".pptx": "ppt",
 }
 ATTACHMENT_HEADING_PREFIX = "附件："
+HEADING_BLOCK_TYPES = {3, 4, 5}
+EXTRACTED_CONTENT_BLOCK_TYPES = {2, 27, 31, 32}
+
+
+def load_failed_docs_from_report(report_path: str) -> List[Dict[str, Any]]:
+    """Load documents with failed attachment files from a previous run report."""
+    with open(report_path, encoding="utf-8") as f:
+        data = json.load(f)
+
+    docs: List[Dict[str, Any]] = []
+    seen: Set[str] = set()
+    for doc in data.get("documents", []):
+        failed_files = [
+            item for item in doc.get("files", []) if item.get("status") == "failed"
+        ]
+        if not failed_files:
+            continue
+        node_token = doc.get("node_token") or ""
+        if not node_token or node_token in seen:
+            continue
+        seen.add(node_token)
+        docs.append(
+            {
+                "node_token": node_token,
+                "title": doc.get("title") or node_token,
+                "source_path": doc.get("source_path") or "",
+                "failed_files": [item["name"] for item in failed_files],
+            }
+        )
+    return docs
+
+
+def _block_heading_text(block: Dict[str, Any]) -> str:
+    for key in ("heading1", "heading2", "heading3"):
+        heading = block.get(key, {})
+        parts = [
+            el.get("text_run", {}).get("content", "")
+            for el in heading.get("elements", [])
+        ]
+        text = "".join(parts).strip()
+        if text:
+            return text
+    return ""
 
 
 @dataclass
@@ -380,6 +423,104 @@ class AttachmentExtractor:
             result.error = "全部附件提取失败"
 
         return result
+
+    def clear_orphan_attachment_headings(
+        self,
+        doc_token: str,
+        failed_file_names: List[str],
+    ) -> int:
+        """Remove heading-only blocks left by previous failed extractions."""
+        target_headings = {
+            f"{ATTACHMENT_HEADING_PREFIX}{name}" for name in failed_file_names
+        }
+        if not target_headings:
+            return 0
+
+        children = self._list_root_children_ordered(doc_token)
+        orphan_indexes: List[int] = []
+        for index, block in enumerate(children):
+            if block.get("block_type") not in HEADING_BLOCK_TYPES:
+                continue
+            heading = _block_heading_text(block)
+            if heading not in target_headings:
+                continue
+            if self._is_orphan_attachment_heading(children, index, heading):
+                orphan_indexes.append(index)
+
+        deleted = 0
+        for index in sorted(orphan_indexes, reverse=True):
+            if self._delete_root_child_at(doc_token, index):
+                deleted += 1
+            else:
+                logger.warning("删除空标题失败 doc=%s index=%s", doc_token, index)
+        return deleted
+
+    @staticmethod
+    def _is_orphan_attachment_heading(
+        children: List[Dict[str, Any]],
+        index: int,
+        heading_text: str,
+    ) -> bool:
+        if not heading_text.startswith(ATTACHMENT_HEADING_PREFIX):
+            return False
+        if index + 1 >= len(children):
+            return True
+
+        next_block = children[index + 1]
+        next_type = next_block.get("block_type")
+        if next_type in EXTRACTED_CONTENT_BLOCK_TYPES:
+            return False
+        if next_type in HEADING_BLOCK_TYPES:
+            return True
+        if next_type == 23:
+            return True
+        return True
+
+    def _list_root_children_ordered(self, doc_token: str) -> List[Dict[str, Any]]:
+        root_id = self._get_root_id(doc_token)
+        if not root_id:
+            return []
+
+        url = (
+            f"https://open.feishu.cn/open-apis/docx/v1/documents/"
+            f"{doc_token}/blocks/{root_id}/children"
+        )
+        items: List[Dict[str, Any]] = []
+        page_token = ""
+        while True:
+            params: Dict[str, Any] = {"document_revision_id": -1, "page_size": 500}
+            if page_token:
+                params["page_token"] = page_token
+            resp = requests.get(url, headers=self._headers, params=params, timeout=30)
+            data = resp.json()
+            if data.get("code") != 0:
+                logger.warning("获取子块失败 %s: %s", doc_token, data.get("msg"))
+                break
+            items.extend(data.get("data", {}).get("items", []))
+            if not data.get("data", {}).get("has_more"):
+                break
+            page_token = data.get("data", {}).get("page_token", "")
+            if not page_token:
+                break
+        return items
+
+    def _delete_root_child_at(self, doc_token: str, index: int) -> bool:
+        root_id = self._get_root_id(doc_token)
+        if not root_id:
+            return False
+        url = (
+            f"https://open.feishu.cn/open-apis/docx/v1/documents/"
+            f"{doc_token}/blocks/{root_id}/children/batch_delete"
+        )
+        resp = requests.delete(
+            url,
+            headers=self._headers,
+            params={"document_revision_id": -1},
+            json={"start_index": index, "end_index": index + 1},
+            timeout=30,
+        )
+        data = resp.json() if resp.text else {}
+        return resp.status_code == 200 and data.get("code") == 0
 
     def _get_doc_token(self, node_token: str) -> Optional[str]:
         r = requests.get(
