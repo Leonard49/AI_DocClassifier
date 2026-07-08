@@ -1,8 +1,9 @@
 # AI DocClassifier 系统说明文档
 
 > 飞书知识库文档自动分类系统  
-> 版本：`feature/multi-worker-parallel` 分支  
-> 更新日期：2026-06-17
+> 版本：`feature/attachment-extract` 分支  
+> 更新日期：2026-07-08  
+> 操作手册：[QUICK_START.md](QUICK_START.md)
 
 ---
 
@@ -77,7 +78,8 @@
 | 文件夹 | `create_feishu_node.py` / `feishu_title_check.py` | 创建/查找文件夹；同名标题自动重命名 |
 | 复制 | `copy_doc.py` | wiki copy API |
 | 打标 | `add_tag_block.py` | 原文档插入标签块 |
-| 飞书限速 | `feishu_rate_limit.py` | 读文档全局 4 req/s |
+| 飞书限速 | `feishu_http.py` | 跨进程 + 本进程限速、429/99991400 自动重试 |
+| 飞书限速（兼容） | `feishu_rate_limit.py` | 读文档等模块的限速入口 |
 | LLM 限速 | `llm_rate_limit.py` | LLM 并发≤2，约 1.2 req/s |
 | 日志 | `run_logging.py` | 终端输出写入 `logs/` |
 
@@ -209,27 +211,23 @@
 
 ### 5.3 共享文件夹配置（Windows）
 
-**主机：**
+**推荐：** 直接 `copy .env.example .env`，模板已按 3～5 人并行预设共享路径与限速参数。
 
 ```env
 WORKER_ID=hydrew
 SCAN_ROOT_TOKEN=token_A
 TARGET_PARENT_TOKEN=GPFewOUJ1iGBrGks7R7cB137nDh
-SHARED_STATE_DB=F:\shared_db\shared_copy_state.db
+SHARED_STATE_DB=\\HF-D-006494B\shared_db\shared_copy_state.db
+FEISHU_RATE_LIMIT_DB=\\HF-D-006494B\shared_db\feishu_rate_limit.db
 ENABLE_SHARED_DEDUP=true
+ENABLE_CROSS_PROCESS_FEISHU_LIMIT=true
+FEISHU_GLOBAL_MAX_PER_SECOND=10
+FEISHU_LOCAL_MAX_PER_SECOND=3
 READ_WORKERS=2
+CLASSIFY_WORKERS=3
 ```
 
-**同事（UNC 路径）：**
-
-```env
-WORKER_ID=bob
-SCAN_ROOT_TOKEN=token_B
-TARGET_PARENT_TOKEN=GPFewOUJ1iGBrGks7R7cB137nDh
-SHARED_STATE_DB=\\HOSTNAME\shared_db\shared_copy_state.db
-ENABLE_SHARED_DEDUP=true
-READ_WORKERS=2
-```
+**同事（UNC 路径）：** 同上，仅改 `WORKER_ID`、`FEISHU_APP_*`、`SCAN_ROOT_TOKEN`、`LLM_API_KEY`。
 
 共享文件夹需给同事**修改**权限。程序会自动检测网络路径并使用 `DELETE` 日志模式（不用 WAL），降低 SQLite 损坏风险。
 
@@ -266,6 +264,20 @@ READ_WORKERS=2
 | `WORKER_ID` | `主机名-PID` | 执行者标识，每人应不同 |
 | `CLAIM_TIMEOUT_MINUTES` | `30` | 复制占位超时（分钟） |
 
+### 6.2.1 飞书 API 限速（多人并行）
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `ENABLE_CROSS_PROCESS_FEISHU_LIMIT` | `true` | 跨 worker 全局飞书限速 |
+| `FEISHU_RATE_LIMIT_DB` | 共享盘路径 | 与 `SHARED_STATE_DB` 同目录 |
+| `FEISHU_GLOBAL_MAX_PER_SECOND` | `2`（模板 `10`） | 所有 worker 合计 req/s 上限 |
+| `FEISHU_LOCAL_MAX_PER_SECOND` | `4`（模板 `3`） | 单 worker 本进程上限 |
+| `FEISHU_API_MAX_RETRIES` | `5` | 超时/429/99991400 重试次数 |
+| `FEISHU_API_TIMEOUT` | `90` | 普通 API 超时（秒） |
+| `FEISHU_DOWNLOAD_TIMEOUT` | `180` | 附件下载超时（秒） |
+
+**并行人数建议：** 3 人 → 6；4 人 → 8；5 人 → 10（模板值）。人数更少时可直接用模板值，更保守。
+
 ### 6.3 行为控制
 
 | 参数 | 默认值 | 说明 |
@@ -283,7 +295,7 @@ READ_WORKERS=2
 | 参数 | 默认值 | 建议 | 说明 |
 |------|--------|------|------|
 | **`READ_WORKERS`** | **`2`** | **`2`** | 并行读正文线程数；过高易触发飞书限流 `99991400` |
-| `CLASSIFY_WORKERS` | `4` | 保持 4 | 分类线程数；实际 LLM 并发被限制为 2，改小无益 |
+| `CLASSIFY_WORKERS` | `4` | **3（多人）** | 分类线程数；实际 LLM 并发被限制为 2/进程 |
 | `CLASSIFY_MAX_CHARS` | `3000` | — | 送入 LLM 的正文最大字符数 |
 | `LLM_MODEL` | `deepseek-v4-flash` | — | LLM 模型名（换模型只改此项） |
 | `LLM_BASE_URL` | `https://qlitellm.phicotek.com/v1` | — | OpenAI 兼容网关地址 |
@@ -398,19 +410,26 @@ Remove-Item scanned_documents_*.json -ErrorAction SilentlyContinue
 
 ### 10.1 飞书 API
 
+**跨进程限速（`feishu_http.py`，2026-07 新增）：**
+
+- 读取、附件下载/写回、Token 刷新等走 `feishu_request()`，共享 `FEISHU_RATE_LIMIT_DB`
+- 全局 + 本进程双层限速；429 / 5xx / `99991400` 自动指数退避重试
+- 扫描、复制、建文件夹等路径仍使用独立 `requests` 调用（单线程或串行，风险较低）
+
 | 阶段 | 接口 | 限制与对策 |
 |------|------|-----------|
 | 扫描 | `wiki/.../nodes` | BFS 单线程 + sleep 0.1s |
-| **读取** | **`docx/.../raw_content`** | **约 5 req/s/App**；代码限速 4 req/s；`READ_WORKERS=2` |
+| **读取 / 附件** | **`docx/.../raw_content` 等** | **跨进程限速 + `READ_WORKERS=2`** |
 | 复制/建文件夹 | `wiki/.../copy`, `nodes` | 串行执行 |
 
-**限流错误码：** `99991400`（HTTP 400）→ 自动指数退避重试（最多 5 次）。
+**限流错误码：** `99991400`（HTTP 400）→ 自动指数退避重试（最多 `FEISHU_API_MAX_RETRIES` 次）。
 
 **缓解措施（按优先级）：**
 
-1. `.env` 设 `READ_WORKERS=2`
+1. 使用 `.env.example` 中的多人并行模板（共享限速库 + `READ_WORKERS=2`）
 2. 多人并行时使用**不同** `FEISHU_APP_ID`
-3. 避免同一 App 多进程同时大量读文档
+3. 同事启动错开 5～10 分钟，降低同时扫描峰值
+4. 按并行人数调整 `FEISHU_GLOBAL_MAX_PER_SECOND`（见 6.2.1）
 
 ### 10.2 LLM API
 
@@ -473,9 +492,32 @@ MAX_DOCUMENTS=10
 
 终端 `Ctrl+C` 或结束 `python main.py` 进程。复制阶段每 5 篇保存 progress；读取阶段中断不保存读取进度。
 
+### Q8：附件提取部分失败怎么办？
+
+```powershell
+python retry_attachment_extract.py
+```
+
+从 `logs/attachment_extract.json` 读取失败清单，清理空标题后重试。
+
+### Q9：多人并行 launch 前检查什么？
+
+见 [QUICK_START.md 第七节](QUICK_START.md#七落地前检查清单)：`WORKER_ID` 唯一、不同 App、共享库可写、试跑 `MAX_DOCUMENTS=10`。
+
+### Q10：已知风险（生产环境）
+
+| 风险 | 影响 | 缓解 |
+|------|------|------|
+| 共享库短暂不可写 | 无法 claim，跳过复制（fail-closed） | 确保共享盘稳定；恢复后重跑 |
+| LLM 限速为单进程 | 5 worker 合计 LLM 压力较大 | `CLASSIFY_WORKERS=3`；观察 502 后错峰 |
+| 扫描/复制未走跨进程限速 | 同时启动时 API 峰值 | 启动错开 5～10 分钟 |
+| `scan_snapshot.db` 本机独立 | 各 worker 增量基线略有差异 | 可接受；定期 `FULL_SCAN_CALIBRATION_DAYS=30` 校准 |
+
 ---
 
 ## 十二、快速启动
+
+> 完整操作步骤见 **[QUICK_START.md](QUICK_START.md)**（推荐周五落地使用）。
 
 ```powershell
 # 1. 环境

@@ -64,7 +64,9 @@
 | 防重复 | 已有 `附件：{文件名}` 标题则跳过 |
 | 可视化统计 | 进度条、阶段汇总、终局统计、失败列表 |
 | 运行清单 | `logs/attachment_extract.json` |
-| 依赖 | `PyMuPDF`、`python-docx`、`lxml`、`python-pptx` |
+| 失败重试 | `retry_attachment_extract.py` |
+| 依赖 | `PyMuPDF`、`python-docx`、`lxml`、`python-pptx`；旧版 `.doc`/`.ppt` 需 LibreOffice 或 Word |
+| 跨进程飞书限速 | `feishu_http.py` + `FEISHU_RATE_LIMIT_DB` |
 
 **关键文件：** `attachment_extractor.py`、`attachment_extractors/`
 

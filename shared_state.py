@@ -205,7 +205,7 @@ class SharedCopyState:
             conn.commit()
             return cur.rowcount == 1
 
-        return self._with_db(_claim, True)
+        return self._with_db(_claim, False)
 
     def mark_copied(
         self,
