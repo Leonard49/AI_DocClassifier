@@ -87,6 +87,15 @@ SHARED_STATE_DB = _env("SHARED_STATE_DB") or "shared_copy_state.db"
 WORKER_ID = _env("WORKER_ID")
 CLAIM_TIMEOUT_MINUTES = _env_int("CLAIM_TIMEOUT_MINUTES", 30)
 
+# Feishu API resilience (multi-worker attachment extract)
+ENABLE_CROSS_PROCESS_FEISHU_LIMIT = _env_bool("ENABLE_CROSS_PROCESS_FEISHU_LIMIT", True)
+FEISHU_RATE_LIMIT_DB = _env("FEISHU_RATE_LIMIT_DB")
+FEISHU_GLOBAL_MAX_PER_SECOND = _env_float("FEISHU_GLOBAL_MAX_PER_SECOND", 2.0)
+FEISHU_LOCAL_MAX_PER_SECOND = _env_float("FEISHU_LOCAL_MAX_PER_SECOND", 4.0)
+FEISHU_API_MAX_RETRIES = _env_int("FEISHU_API_MAX_RETRIES", 5)
+FEISHU_API_TIMEOUT = _env_float("FEISHU_API_TIMEOUT", 90.0)
+FEISHU_DOWNLOAD_TIMEOUT = _env_float("FEISHU_DOWNLOAD_TIMEOUT", 180.0)
+
 
 def validate() -> None:
     """Raise ValueError when required settings are missing."""

@@ -1,17 +1,12 @@
 import logging
-import time
 from typing import Optional
 
-import requests
-
 from token_manager import TokenManager
-from feishu_rate_limit import DOCX_READ_LIMITER
+from feishu_http import feishu_request
 
 logger = logging.getLogger(__name__)
 
-# Feishu: docx raw_content 单应用每秒最多 5 次，超限返回 HTTP 400 + code 99991400
 FEISHU_FREQ_LIMIT_CODE = 99991400
-MAX_RETRIES = 5
 
 
 class FeishuDocumentReader:
@@ -19,7 +14,8 @@ class FeishuDocumentReader:
 
     def __init__(self, token_manager: TokenManager, rate_limiter=None):
         self.token_manager = token_manager
-        self.rate_limiter = rate_limiter or DOCX_READ_LIMITER
+        # rate_limiter kept for backward compatibility; feishu_request applies global limit
+        self.rate_limiter = rate_limiter
         self.base_url = "https://open.feishu.cn/open-apis/docx/v1/documents"
         self.wiki_get_node_url = "https://open.feishu.cn/open-apis/wiki/v2/spaces/get_node"
 
@@ -31,12 +27,11 @@ class FeishuDocumentReader:
 
     def _resolve_via_wiki(self, node_token: str) -> Optional[str]:
         try:
-            self.rate_limiter.wait()
-            resp = requests.get(
+            resp = feishu_request(
+                "GET",
                 self.wiki_get_node_url,
                 headers=self._get_headers(),
                 params={"token": node_token},
-                timeout=30,
             )
             data = resp.json()
             if data.get("code") != 0:
@@ -56,8 +51,7 @@ class FeishuDocumentReader:
     def _fetch_raw_content(self, doc_id: str) -> tuple[Optional[str], Optional[int], Optional[str]]:
         """返回 (content, api_code, api_msg)"""
         url = f"{self.base_url}/{doc_id}/raw_content"
-        self.rate_limiter.wait()
-        response = requests.get(url, headers=self._get_headers(), timeout=30)
+        response = feishu_request("GET", url, headers=self._get_headers())
         try:
             data = response.json()
         except ValueError:
@@ -91,29 +85,13 @@ class FeishuDocumentReader:
         last_msg: Optional[str] = None
 
         for doc_id in candidates:
-            for attempt in range(MAX_RETRIES):
-                try:
-                    content, code, msg = self._fetch_raw_content(doc_id)
-                    last_code, last_msg = code, msg
-                    if code == 0:
-                        return content
-
-                    if code == FEISHU_FREQ_LIMIT_CODE:
-                        wait = min(2 ** attempt, 16)
-                        print(
-                            f"⏳ 飞书限流 (99991400)，{wait}s 后重试 "
-                            f"({attempt + 1}/{MAX_RETRIES})"
-                        )
-                        time.sleep(wait)
-                        continue
-
-                    break
-                except requests.RequestException as e:
-                    print(f"获取文档内容网络异常: {e}")
-                    if attempt < MAX_RETRIES - 1:
-                        time.sleep(2 ** attempt)
-                        continue
-                    break
+            try:
+                content, code, msg = self._fetch_raw_content(doc_id)
+                last_code, last_msg = code, msg
+                if code == 0:
+                    return content
+            except Exception as e:
+                print(f"获取文档内容网络异常: {e}")
 
             if last_code not in (None, FEISHU_FREQ_LIMIT_CODE, 0):
                 print(
@@ -123,12 +101,15 @@ class FeishuDocumentReader:
         if wiki_node_token:
             resolved = self._resolve_via_wiki(wiki_node_token)
             if resolved and resolved not in candidates:
-                content, code, msg = self._fetch_raw_content(resolved)
-                if code == 0:
-                    return content
-                print(
-                    f"获取文档内容失败(解析后): code={code}, msg={msg}, doc_id={resolved}"
-                )
+                try:
+                    content, code, msg = self._fetch_raw_content(resolved)
+                    if code == 0:
+                        return content
+                    print(
+                        f"获取文档内容失败(解析后): code={code}, msg={msg}, doc_id={resolved}"
+                    )
+                except Exception as e:
+                    print(f"获取文档内容网络异常(解析后): {e}")
 
         return None
 
@@ -136,8 +117,7 @@ class FeishuDocumentReader:
         """获取文档标题"""
         url = f"{self.base_url}/{document_id}"
         try:
-            self.rate_limiter.wait()
-            response = requests.get(url, headers=self._get_headers(), timeout=30)
+            response = feishu_request("GET", url, headers=self._get_headers())
             data = response.json()
             if data.get("code") == 0:
                 return data.get("data", {}).get("document", {}).get("title")

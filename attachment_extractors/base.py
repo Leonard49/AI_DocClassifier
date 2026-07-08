@@ -5,7 +5,8 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional
 
-import requests
+import config
+from feishu_http import feishu_request
 
 
 class BaseExtractor:
@@ -43,7 +44,7 @@ class BaseExtractor:
 
     def get_root_block_id(self, doc_token: str) -> Optional[str]:
         url = f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_token}/blocks"
-        resp = requests.get(url, headers=self._headers, timeout=30)
+        resp = feishu_request("GET", url, headers=self._headers)
         if resp.status_code != 200:
             return None
         data = resp.json()
@@ -58,8 +59,11 @@ class BaseExtractor:
         has_more = data.get("data", {}).get("has_more", False)
         page_token = data.get("data", {}).get("page_token", "")
         while has_more and page_token:
-            resp = requests.get(
-                url, headers=self._headers, params={"page_token": page_token}, timeout=30
+            resp = feishu_request(
+                "GET",
+                url,
+                headers=self._headers,
+                params={"page_token": page_token},
             )
             data = resp.json()
             if data.get("code") != 0:
@@ -84,11 +88,11 @@ class BaseExtractor:
             f"https://open.feishu.cn/open-apis/docx/v1/documents/"
             f"{doc_token}/blocks/{root_block_id}/children"
         )
-        r = requests.post(
+        r = feishu_request(
+            "POST",
             url,
             headers=self._headers,
             json={"children": [{"block_type": 27, "image": {}}]},
-            timeout=30,
         )
         jr = r.json()
         if jr.get("code") != 0:
@@ -96,7 +100,8 @@ class BaseExtractor:
             return
         bid = jr["data"]["children"][0]["block_id"]
 
-        r = requests.post(
+        r = feishu_request(
+            "POST",
             "https://open.feishu.cn/open-apis/drive/v1/medias/upload_all",
             headers={"Authorization": f"Bearer {self._token}"},
             files={"file": (f"img.{image_ext}", image_bytes, f"image/{image_ext}")},
@@ -106,7 +111,7 @@ class BaseExtractor:
                 "parent_node": bid,
                 "size": str(img_size),
             },
-            timeout=60,
+            timeout=config.FEISHU_DOWNLOAD_TIMEOUT,
         )
         ur = r.json()
         if ur.get("code") != 0:
@@ -114,11 +119,11 @@ class BaseExtractor:
             return
         ftok = ur["data"]["file_token"]
 
-        r = requests.patch(
+        r = feishu_request(
+            "PATCH",
             f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_token}/blocks/{bid}",
             headers=self._headers,
             json={"replace_image": {"token": ftok}},
-            timeout=30,
         )
         jr = r.json() if r.text else {}
         if jr.get("code") == 0:
@@ -131,26 +136,35 @@ class BaseExtractor:
             return
         root_id = self.get_root_block_id(doc_token)
         if not root_id:
-            return
+            raise RuntimeError("无法获取文档根块 ID")
         for i in range(0, len(blocks), 10):
             batch = blocks[i : i + 10]
             url = (
                 f"https://open.feishu.cn/open-apis/docx/v1/documents/"
                 f"{doc_token}/blocks/{root_id}/children"
             )
-            r = requests.post(
-                url, headers=self._headers, json={"children": batch}, timeout=30
+            r = feishu_request(
+                "POST",
+                url,
+                headers=self._headers,
+                json={"children": batch},
             )
             jr = r.json() if r.text else {}
             if r.status_code == 200 and jr.get("code") == 0:
                 print(f"    ✓ {len(batch)}块")
             else:
-                print(f"    ✗ {jr.get('code', '?')}: {jr.get('msg', '')[:80]}")
-                break
+                msg = jr.get("msg", "")[:120]
+                raise RuntimeError(f"写入 blocks 失败: {jr.get('code', '?')} {msg}")
 
     def download_file(self, file_token: str, save_path: str) -> None:
         url = f"https://open.feishu.cn/open-apis/drive/v1/medias/{file_token}/download"
-        resp = requests.get(url, headers=self._headers, stream=True, timeout=60)
+        resp = feishu_request(
+            "GET",
+            url,
+            headers=self._headers,
+            stream=True,
+            timeout=config.FEISHU_DOWNLOAD_TIMEOUT,
+        )
         if resp.status_code != 200:
             raise RuntimeError(f"下载失败 HTTP {resp.status_code}")
         os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)

@@ -14,9 +14,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
-import requests
-
 from attachment_extractors import PDFExtractor, PPTExtractor, WordExtractor
+from feishu_http import feishu_request
 
 logger = logging.getLogger(__name__)
 
@@ -491,7 +490,7 @@ class AttachmentExtractor:
             params: Dict[str, Any] = {"document_revision_id": -1, "page_size": 500}
             if page_token:
                 params["page_token"] = page_token
-            resp = requests.get(url, headers=self._headers, params=params, timeout=30)
+            resp = feishu_request("GET", url, headers=self._headers, params=params)
             data = resp.json()
             if data.get("code") != 0:
                 logger.warning("获取子块失败 %s: %s", doc_token, data.get("msg"))
@@ -512,22 +511,22 @@ class AttachmentExtractor:
             f"https://open.feishu.cn/open-apis/docx/v1/documents/"
             f"{doc_token}/blocks/{root_id}/children/batch_delete"
         )
-        resp = requests.delete(
+        resp = feishu_request(
+            "DELETE",
             url,
             headers=self._headers,
             params={"document_revision_id": -1},
             json={"start_index": index, "end_index": index + 1},
-            timeout=30,
         )
         data = resp.json() if resp.text else {}
         return resp.status_code == 200 and data.get("code") == 0
 
     def _get_doc_token(self, node_token: str) -> Optional[str]:
-        r = requests.get(
+        r = feishu_request(
+            "GET",
             "https://open.feishu.cn/open-apis/wiki/v2/spaces/get_node",
             headers=self._headers,
             params={"token": node_token},
-            timeout=30,
         )
         data = r.json()
         if data.get("code") != 0:
@@ -545,7 +544,7 @@ class AttachmentExtractor:
         page_token = ""
         while True:
             params = {"page_token": page_token} if page_token else None
-            r = requests.get(url, headers=self._headers, params=params, timeout=30)
+            r = feishu_request("GET", url, headers=self._headers, params=params)
             if r.status_code != 200:
                 logger.warning("读取 blocks 失败 HTTP %s: %s", r.status_code, doc_token)
                 break

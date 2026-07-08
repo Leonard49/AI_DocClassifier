@@ -79,6 +79,11 @@ ENABLE_SHARED_DEDUP = config.ENABLE_SHARED_DEDUP
 SHARED_STATE_DB = config.SHARED_STATE_DB
 WORKER_ID = config.WORKER_ID
 CLAIM_TIMEOUT_MINUTES = config.CLAIM_TIMEOUT_MINUTES
+ENABLE_CROSS_PROCESS_FEISHU_LIMIT = config.ENABLE_CROSS_PROCESS_FEISHU_LIMIT
+FEISHU_GLOBAL_MAX_PER_SECOND = config.FEISHU_GLOBAL_MAX_PER_SECOND
+FEISHU_API_MAX_RETRIES = config.FEISHU_API_MAX_RETRIES
+FEISHU_API_TIMEOUT = config.FEISHU_API_TIMEOUT
+FEISHU_DOWNLOAD_TIMEOUT = config.FEISHU_DOWNLOAD_TIMEOUT
 
 # ============================================================
 # 辅助函数（使用 TokenManager 统一 token 管理）
@@ -742,6 +747,15 @@ def main():
     if ENABLE_SHARED_DEDUP:
         print(f"   - 共享状态库: {SHARED_STATE_DB}")
         print(f"   - Worker ID: {WORKER_ID or '(自动生成)'}")
+        if ENABLE_CROSS_PROCESS_FEISHU_LIMIT:
+            print(
+                f"   - 飞书 API 全局限速: 开启 | "
+                f"全局 {FEISHU_GLOBAL_MAX_PER_SECOND}/s | "
+                f"重试 {FEISHU_API_MAX_RETRIES} 次 | "
+                f"超时 {FEISHU_API_TIMEOUT}s | 下载 {FEISHU_DOWNLOAD_TIMEOUT}s"
+            )
+        else:
+            print("   - 飞书 API 全局限速: 关闭（仅本进程限速）")
     
     # 1. 创建 TokenManager
     token_manager = TokenManager(FEISHU_APP_ID, FEISHU_APP_SECRET)
