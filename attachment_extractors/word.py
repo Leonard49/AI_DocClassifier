@@ -6,7 +6,7 @@ import os
 import shutil
 
 from .base import BaseExtractor
-from .doc_convert import convert_doc_to_docx
+from .office_convert import convert_doc_to_docx
 
 
 class WordExtractor(BaseExtractor):

@@ -1,8 +1,12 @@
-"""PPT (.pptx) attachment extractor."""
+"""PPT (.ppt / .pptx) attachment extractor."""
 
 from __future__ import annotations
 
+import os
+import shutil
+
 from .base import BaseExtractor
+from .office_convert import convert_ppt_to_pptx
 
 
 class PPTExtractor(BaseExtractor):
@@ -19,7 +23,25 @@ class PPTExtractor(BaseExtractor):
             )
             return
 
-        prs = Presentation(pptx_path)
+        convert_dir: str | None = None
+        source_path = pptx_path
+        if pptx_path.lower().endswith(".ppt"):
+            print("    转换 .ppt → .pptx ...")
+            source_path = convert_ppt_to_pptx(pptx_path)
+            convert_dir = os.path.dirname(source_path)
+
+        try:
+            self._extract_pptx(
+                source_path, doc_token, root_block_id, Presentation, MSO_SHAPE_TYPE
+            )
+        finally:
+            if convert_dir and os.path.isdir(convert_dir):
+                shutil.rmtree(convert_dir, ignore_errors=True)
+
+    def _extract_pptx(
+        self, pptx_path: str, doc_token: str, root_block_id: str, presentation_cls, shape_type
+    ) -> None:
+        prs = presentation_cls(pptx_path)
 
         for slide_num, slide in enumerate(prs.slides, 1):
             items = []
@@ -31,19 +53,22 @@ class PPTExtractor(BaseExtractor):
                     text = shape.text_frame.text.strip()
                     if text:
                         items.append((top, left, "text", text))
-                elif shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
-                    img = shape.image
-                    items.append(
-                        (
-                            top,
-                            left,
-                            "image",
-                            {
-                                "image_bytes": img.blob,
-                                "image_ext": img.content_type.split("/")[-1],
-                            },
+                elif shape.shape_type == shape_type.PICTURE:
+                    try:
+                        img = shape.image
+                        items.append(
+                            (
+                                top,
+                                left,
+                                "image",
+                                {
+                                    "image_bytes": img.blob,
+                                    "image_ext": img.content_type.split("/")[-1],
+                                },
+                            )
                         )
-                    )
+                    except Exception as exc:
+                        print(f"    跳过无法识别的图片: {exc}")
 
             if not items:
                 continue
@@ -67,13 +92,16 @@ class PPTExtractor(BaseExtractor):
                     if text_buf:
                         self.append_blocks(doc_token, text_buf)
                         text_buf = []
-                    self.insert_image(
-                        doc_token,
-                        root_block_id,
-                        data["image_bytes"],
-                        data["image_ext"],
-                        len(data["image_bytes"]),
-                    )
+                    try:
+                        self.insert_image(
+                            doc_token,
+                            root_block_id,
+                            data["image_bytes"],
+                            data["image_ext"],
+                            len(data["image_bytes"]),
+                        )
+                    except Exception as exc:
+                        print(f"    跳过图片上传: {exc}")
 
             if text_buf:
                 self.append_blocks(doc_token, text_buf)
