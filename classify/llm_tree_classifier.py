@@ -11,7 +11,7 @@ import json
 import random
 import re
 import time
-from typing import Dict, List, Union, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, Union, Optional, Tuple, TYPE_CHECKING
 
 from openai import (
     APIConnectionError,
@@ -805,6 +805,13 @@ Others
     def _clean_response(self, text: str) -> str:
         """清理 AI 返回的文本，提取出路径字符串"""
         raw = text.strip()
+        # Strip common thinking / markdown wrappers
+        raw = re.sub(
+            r"<think>.*?</think>",
+            "",
+            raw,
+            flags=re.IGNORECASE | re.DOTALL,
+        ).strip()
         # 去除 markdown 代码块
         if raw.startswith("```json"):
             raw = raw[7:]
@@ -815,6 +822,9 @@ Others
         raw = raw.strip().strip('"').strip("'")
         if raw.startswith("分类结果："):
             raw = raw.replace("分类结果：", "").strip()
+        extracted = self._extract_path_candidate(raw)
+        if extracted:
+            return extracted
         # 如果结果中包含换行，只取第一行（通常就是路径）
         if "\n" in raw:
             raw = raw.split("\n")[0].strip()
@@ -823,6 +833,36 @@ Others
         raw = raw.replace("→", "->").replace("=>", "->")
         raw = re.sub(r"\s*->\s*", " -> ", raw)
         return raw
+
+    def _extract_path_candidate(self, text: str) -> str:
+        """从多行/夹杂说明的回复中挑出最像标签路径的一行。"""
+        if not text:
+            return ""
+        lines = [ln.strip() for ln in text.replace("\r\n", "\n").split("\n") if ln.strip()]
+        # Prefer exact leaf / Others matches first
+        for line in reversed(lines):
+            candidate = line.strip().strip('"').strip("'")
+            candidate = re.sub(r"^\s*[-*]\s*", "", candidate)
+            candidate = re.sub(r"^\s*\d+[.)、]\s*", "", candidate)
+            candidate = candidate.replace("→", "->").replace("=>", "->")
+            candidate = re.sub(r"\s*->\s*", " -> ", candidate)
+            if candidate == "Others" or candidate in self.leaf_paths:
+                return candidate
+        # Then any line that looks like a path and validates
+        for line in reversed(lines):
+            candidate = line.strip().strip('"').strip("'")
+            candidate = re.sub(r"^\s*[-*]\s*", "", candidate)
+            candidate = re.sub(r"^\s*\d+[.)、]\s*", "", candidate)
+            candidate = candidate.replace("→", "->").replace("=>", "->")
+            candidate = re.sub(r"\s*->\s*", " -> ", candidate)
+            if "->" not in candidate and candidate not in self.LABEL_TREE:
+                continue
+            validated = self._validate_path(candidate)
+            if validated and validated != "Others":
+                return validated
+            if candidate == "Others":
+                return "Others"
+        return ""
 
     def _path_to_json(self, path_str: str) -> Dict[str, List[str]]:
         """将路径字符串转换为 JSON 字典"""
@@ -877,12 +917,44 @@ Others
         print(f"警告: 路径 '{path_str}' 不在预定义标签树中，回退为 Others")
         return "Others"
 
+    @staticmethod
+    def _message_text(message: Any) -> str:
+        """Extract assistant text; some gateways put the answer in reasoning fields."""
+        content = getattr(message, "content", None)
+        if isinstance(content, str) and content.strip():
+            return content
+        if isinstance(content, list):
+            parts: List[str] = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    text = item.get("text") or item.get("content")
+                    if text:
+                        parts.append(str(text))
+                else:
+                    text = getattr(item, "text", None) or getattr(item, "content", None)
+                    if text:
+                        parts.append(str(text))
+            joined = "\n".join(parts).strip()
+            if joined:
+                return joined
+        for attr in ("reasoning_content", "reasoning"):
+            value = getattr(message, attr, None)
+            if isinstance(value, str) and value.strip():
+                return value
+        return (content or "") if isinstance(content, str) else ""
+
     def _request_path(self, prompt: str) -> str:
         response = self._chat_completion_with_retry(self._build_messages(prompt))
-        raw_result = response.choices[0].message.content
+        raw_result = self._message_text(response.choices[0].message)
         if self.verbose:
             print(f"AI 返回原始结果: {raw_result}")
-        return self._clean_response(raw_result or "")
+        cleaned = self._clean_response(raw_result or "")
+        if not cleaned and raw_result:
+            # First-line cleanup emptied the string; try whole-text path extraction.
+            cleaned = self._extract_path_candidate(raw_result)
+        return cleaned
 
     def _prepare_text(self, content: str, title: Optional[str] = None) -> str:
         body = (content or "")[: self.max_content_chars]
@@ -956,7 +1028,7 @@ Others
                         model=self.model,
                         messages=messages,
                         temperature=0.1,
-                        max_tokens=256,
+                        max_tokens=512,
                         top_p=0.9,
                     )
                 except Exception as e:

@@ -22,7 +22,6 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 import config
-from classify.classify_cache import ClassifyCache
 from feishu.copy_doc import FeishuCopyError
 from feishu.create_feishu_node import FeishuNodeCreator
 from feishu.title_check import FolderNameChecker
@@ -234,14 +233,14 @@ def main() -> int:
     creator = FeishuNodeCreator(tm, space_id)
     mover = FeishuWikiMover(tm, space_id)
 
-    cache = ClassifyCache() if config.USE_CLASSIFY_CACHE else None
+    # Always re-call LLM for Others correction; never reuse stale Others cache.
     classifier = LLMTreeClassifier(
         api_key=config.LLM_API_KEY,
         model=config.LLM_MODEL,
         base_url=config.LLM_BASE_URL,
         max_content_chars=config.CLASSIFY_MAX_CHARS,
         verbose=config.CLASSIFY_VERBOSE,
-        cache=cache,
+        cache=None,
         max_retries=config.LLM_MAX_RETRIES,
         request_timeout=config.LLM_REQUEST_TIMEOUT,
     )
