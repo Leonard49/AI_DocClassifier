@@ -24,11 +24,11 @@
 | 全局去重 | `shared_copy_state.db` 按 `obj_token` 去重，避免重复复制 |
 | 目标目录验证 | 结束时扫描目标目录，以实际叶子文档数作为成功口径 |
 | 共享库容错 | 网络盘 SQLite 禁用 WAL、损坏自动重建 |
-| 通用 LLM 分类器 | `llm_tree_classifier.py`，`LLM_MODEL` / `LLM_BASE_URL` 可配置 |
+| 通用 LLM 分类器 | `classify/llm_tree_classifier.py`，`LLM_MODEL` / `LLM_BASE_URL` 可配置 |
 | 飞书/LLM 限流 | `READ_WORKERS=2` 建议值，LLM 全局并发≤2 |
 | 同名标题处理 | 目标子目录自动重命名为 `标题 (2)` 等 |
 
-**关键文件：** `shared_state.py`、`config.py` 并行配置
+**关联文件：** `state/shared_state.py`、`config.py` 并行配置
 
 ---
 
@@ -47,11 +47,11 @@
 | 分类失败清单 | `logs/classification_failures.json` 记录标题与 wiki 路径 |
 | 排除类清单 | `logs/excluded_reports.json` |
 
-**关键文件：** `scan_snapshot.py`、`llm_tree_classifier.py`（排除规则）
+**关联文件：** `state/scan_snapshot.py`、`classify/llm_tree_classifier.py`（排除规则）
 
 ---
 
-## `feature/attachment-extract`（当前推荐）
+## `feature/attachment-extract`
 
 **基于：** `feature/scan-snapshot-plan-b`
 
@@ -64,13 +64,32 @@
 | 防重复 | 已有 `附件：{文件名}` 标题则跳过 |
 | 可视化统计 | 进度条、阶段汇总、终局统计、失败列表 |
 | 运行清单 | `logs/attachment_extract.json` |
-| 失败重试 | `retry_attachment_extract.py` |
+| 失败重试 | `tools/retry_attachment_extract.py` |
 | 依赖 | `PyMuPDF`、`python-docx`、`lxml`、`python-pptx`；旧版 `.doc`/`.ppt` 需 LibreOffice 或 Word |
-| 跨进程飞书限速 | `feishu_http.py` + `FEISHU_RATE_LIMIT_DB` |
-
-**关键文件：** `attachment_extractor.py`、`attachment_extractors/`
+| 跨进程飞书限速 | `feishu/http.py` + `FEISHU_RATE_LIMIT_DB` |
 
 **移除：** 独立子项目 `PDF2Feishu/`（逻辑已迁入主仓库）
+
+---
+
+## `feature/classify-quality-restructure`（当前推荐）
+
+**基于：** `feature/attachment-extract`
+
+**主要变化：**
+
+| 能力 | 说明 |
+|------|------|
+| 包结构重组 | 代码按 `feishu/`、`classify/`、`state/`、`attachment/`、`tools/`、`util/` 划分 |
+| 产品线判定 | QT-SOP-PM-048E 模组/项目名 → 产品线（`classify/module_product_map.py`） |
+| Others 门禁 | `OTHERS_RATIO_FAIL_THRESHOLD`（默认 0.15）超限则整批中止复制 |
+| 单层超限分卷 | Feishu 131003 时创建同级 `名称 (2)` 分卷；共享 `folder_rollover_state.db` |
+| Others 存量纠偏 | `tools/reclassify_others_move.py` 重分类后 **move**（非 copy） |
+| 文档 | `docs/分类准则说明.md`、`docs/PROJECT_STRUCTURE.md` |
+
+**关联文件：** `attachment/`、`classify/`、`state/`、`tools/`、`docs/分类准则说明.md`、`docs/PROJECT_STRUCTURE.md`
+
+**兼容：** 根目录保留 `retry_attachment_extract.py`、`reclassify_others_move.py` 薄入口
 
 ---
 
@@ -80,7 +99,8 @@
 master
   └── feature/multi-worker-parallel
         └── feature/scan-snapshot-plan-b
-              └── feature/attachment-extract  ← 当前推荐
+              └── feature/attachment-extract
+                    └── feature/classify-quality-restructure  ← 当前推荐
 ```
 
 ## 选用建议
@@ -89,14 +109,15 @@ master
 |------|----------|
 | 单人、小目录、快速试用 | `feature/multi-worker-parallel` |
 | 大目录增量跑、排除周报日报 | `feature/scan-snapshot-plan-b` |
-| 分享以附件为主、需提取正文再分类 | **`feature/attachment-extract`** |
+| 仅需附件提取 + 跨进程限速 | `feature/attachment-extract` |
+| 生产落地（分类质量 + 分卷 + 包结构） | **`feature/classify-quality-restructure`** |
 
 ## 切换与更新
 
 ```powershell
 git fetch origin
-git checkout feature/attachment-extract
-git pull origin feature/attachment-extract
+git checkout feature/classify-quality-restructure
+git pull origin feature/classify-quality-restructure
 copy .env.example .env
 # 编辑 .env 后
 pip install -r requirements.txt

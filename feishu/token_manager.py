@@ -2,7 +2,7 @@ import logging
 import time
 from typing import Optional
 
-from feishu_http import feishu_request, is_retryable_error
+from .http import feishu_request, is_retryable_error
 
 logger = logging.getLogger(__name__)
 

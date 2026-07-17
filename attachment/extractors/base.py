@@ -6,7 +6,7 @@ import os
 from typing import Any, Dict, List, Optional
 
 import config
-from feishu_http import feishu_request
+from feishu.http import feishu_request
 
 
 class BaseExtractor:

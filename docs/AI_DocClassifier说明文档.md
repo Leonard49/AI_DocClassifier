@@ -1,8 +1,8 @@
 # AI DocClassifier 系统说明文档
 
 > 飞书知识库文档自动分类系统  
-> 版本：`feature/attachment-extract` 分支  
-> 更新日期：2026-07-08  
+> 版本：`feature/classify-quality-restructure` 分支  
+> 更新日期：2026-07-17  
 > 操作手册：[QUICK_START.md](QUICK_START.md)
 
 ---
@@ -57,31 +57,36 @@
 | `master` | 早期单机版本 |
 | `feature/multi-worker-parallel` | 多人并行、共享去重、目标目录验证统计 |
 | `feature/scan-snapshot-plan-b` | 扫描快照增量、排除类规则、分类失败清单 |
-| **`feature/attachment-extract`** | **附件提取合入主流程（当前推荐）** |
+| `feature/attachment-extract` | 附件提取合入主流程 |
+| **`feature/classify-quality-restructure`** | **包结构重组 + 分类质量/分卷/Others 纠偏（当前推荐）** |
 
 ---
 
 ## 二、项目结构
 
-| 模块 | 文件 | 职责 |
+详见 [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)。
+
+| 模块 | 路径 | 职责 |
 |------|------|------|
 | 入口 | `main.py` | 流程编排、并行调度、进度与统计 |
 | 配置 | `config.py` | 从 `.env` 加载环境变量 |
-| Token | `token_manager.py` | 飞书 `tenant_access_token` 自动刷新 |
-| 扫描 | `wiki_scanner.py` | BFS 遍历 wiki，仅收集叶子 docx；可选扫描缓存 |
-| 读文档 | `read_feishu_doc.py` | 调用 docx API 获取正文；限流重试 |
-| **附件提取** | **`attachment_extractor.py`** | PDF/Word/PPT 附件转文本写回源文档（可开关） |
-| 附件格式 | `attachment_extractors/` | PDF / Word / PPT 提取器实现 |
-| 分类 | `llm_tree_classifier.py` | 标签树 + LLM 分类（`LLM_MODEL` 可配置） |
-| 分类缓存 | `classify_cache.py` | SQLite 缓存分类结果（按 `obj_token` + 内容 hash） |
-| **共享去重** | **`shared_state.py`** | 跨 worker 的 `obj_token` 复制注册表（SQLite） |
-| 文件夹 | `create_feishu_node.py` / `feishu_title_check.py` | 创建/查找文件夹；同名标题自动重命名 |
-| 复制 | `copy_doc.py` | wiki copy API |
-| 打标 | `add_tag_block.py` | 原文档插入标签块 |
-| 飞书限速 | `feishu_http.py` | 跨进程 + 本进程限速、429/99991400 自动重试 |
-| 飞书限速（兼容） | `feishu_rate_limit.py` | 读文档等模块的限速入口 |
-| LLM 限速 | `llm_rate_limit.py` | LLM 并发≤2，约 1.2 req/s |
-| 日志 | `run_logging.py` | 终端输出写入 `logs/` |
+| Token | `feishu/token_manager.py` | 飞书 `tenant_access_token` 自动刷新 |
+| 扫描 | `feishu/wiki_scanner.py` | BFS 遍历 wiki，仅收集叶子 docx |
+| 读文档 | `feishu/read_doc.py` | 调用 docx API 获取正文 |
+| **附件提取** | **`attachment/extractor.py`** | PDF/Word/PPT 附件转文本写回源文档 |
+| 附件格式 | `attachment/extractors/` | PDF / Word / PPT 提取器实现 |
+| 分类 | `classify/llm_tree_classifier.py` | 标签树 + LLM 分类 |
+| 分类缓存 | `classify/classify_cache.py` | SQLite 缓存分类结果 |
+| **共享去重** | **`state/shared_state.py`** | 跨 worker 的 `obj_token` 复制注册表 |
+| 分卷 | `state/folder_rollover.py` | 单层节点超限自动分卷 |
+| 文件夹 | `feishu/create_feishu_node.py` / `feishu/title_check.py` | 创建/查找文件夹；同名标题重命名 |
+| 复制 | `feishu/copy_doc.py` | wiki copy API |
+| 移动 | `feishu/wiki_move.py` | wiki move API（Others 纠偏） |
+| 打标 | `feishu/add_tag_block.py` | 原文档插入标签块 |
+| 飞书限速 | `feishu/http.py` | 跨进程 + 本进程限速、自动重试 |
+| LLM 限速 | `classify/llm_rate_limit.py` | LLM 并发≤2 |
+| 运维脚本 | `tools/` | 附件重试、Others 移动纠偏 |
+| 日志 | `util/run_logging.py` | 终端输出写入 `logs/` |
 
 ---
 
@@ -384,7 +389,7 @@ Remove-Item scanned_documents_*.json -ErrorAction SilentlyContinue
 
 ### 9.1 标签树
 
-分类依据 `llm_tree_classifier.py` 中硬编码的 `LABEL_TREE`，顶层包括 `Cellular`、`Automotive`、`Smart` 等，最深 3 级。LLM 必须从树中选择**叶子路径**，无效路径回退 `Others`；非叶子结果会二次下钻或关键词匹配。
+分类依据 `classify/llm_tree_classifier.py` 中硬编码的 `LABEL_TREE`，顶层包括 `Cellular`、`Automotive`、`Smart` 等，最深 3 级。LLM 必须从树中选择**叶子路径**，无效路径回退 `Others`；非叶子结果会二次下钻或关键词匹配。
 
 ### 9.2 输出格式
 
@@ -410,7 +415,7 @@ Remove-Item scanned_documents_*.json -ErrorAction SilentlyContinue
 
 ### 10.1 飞书 API
 
-**跨进程限速（`feishu_http.py`，2026-07 新增）：**
+**跨进程限速（`feishu/http.py`，2026-07 新增）：**
 
 - 读取、附件下载/写回、Token 刷新等走 `feishu_request()`，共享 `FEISHU_RATE_LIMIT_DB`
 - 全局 + 本进程双层限速；429 / 5xx / `99991400` 自动指数退避重试
@@ -495,7 +500,7 @@ MAX_DOCUMENTS=10
 ### Q8：附件提取部分失败怎么办？
 
 ```powershell
-python retry_attachment_extract.py
+python -m tools.retry_attachment_extract
 ```
 
 从 `logs/attachment_extract.json` 读取失败清单，清理空标题后重试。
@@ -916,4 +921,4 @@ flowchart LR
 
 ---
 
-*文档对应仓库：AI_DocClassifier · 分支 feature/attachment-extract*
+*文档对应仓库：AI_DocClassifier · 分支 feature/classify-quality-restructure*

@@ -22,28 +22,30 @@ from datetime import datetime
 from typing import Optional, List, Dict, Tuple, Set
 
 import config
-from attachment_extractor import (
+from attachment.extractor import (
     AttachmentExtractor,
     print_attachment_summary,
     save_attachment_report,
 )
-from add_tag_block import FeishuDocumentTagAdder
-from classify_cache import ClassifyCache
-from copy_doc import FeishuWikiCopier
-from create_feishu_node import FeishuNodeCreator
-from feishu_title_check import FolderNameChecker
-from llm_tree_classifier import (
+from feishu.add_tag_block import FeishuDocumentTagAdder
+from classify.classify_cache import ClassifyCache
+from feishu.copy_doc import FeishuCopyError, FeishuWikiCopier
+from feishu.create_feishu_node import FeishuNodeCreator
+from feishu.title_check import FolderNameChecker
+from state.folder_rollover import FolderRolloverManager, is_node_limit_error
+from classify.llm_tree_classifier import (
     EXCLUDED_REPORT_TYPES,
     LLMTreeClassifier,
     excluded_report_category,
     is_excluded_report_tag,
 )
-from read_feishu_doc import FeishuDocumentReader
-from run_logging import setup_run_log
-from scan_snapshot import ScanSnapshot
-from shared_state import SharedCopyState, default_worker_id
-from token_manager import TokenManager
-from wiki_scanner import SimpleWikiScanner
+from feishu.read_doc import FeishuDocumentReader
+from util.run_logging import setup_run_log
+from state.scan_snapshot import ScanSnapshot
+from state.shared_folder_rollover import SharedFolderRolloverStore, default_rollover_db_path
+from state.shared_state import SharedCopyState, default_worker_id
+from feishu.token_manager import TokenManager
+from feishu.wiki_scanner import SimpleWikiScanner
 
 FEISHU_APP_ID = config.FEISHU_APP_ID
 FEISHU_APP_SECRET = config.FEISHU_APP_SECRET
@@ -69,6 +71,9 @@ CLASSIFY_WORKERS = config.CLASSIFY_WORKERS
 CLASSIFY_MAX_CHARS = config.CLASSIFY_MAX_CHARS
 USE_CLASSIFY_CACHE = config.USE_CLASSIFY_CACHE
 CLASSIFY_VERBOSE = config.CLASSIFY_VERBOSE
+OTHERS_RATIO_FAIL_THRESHOLD = config.OTHERS_RATIO_FAIL_THRESHOLD
+ENABLE_FOLDER_ROLLOVER = config.ENABLE_FOLDER_ROLLOVER
+FOLDER_ROLLOVER_DB = config.FOLDER_ROLLOVER_DB
 LLM_MAX_RETRIES = config.LLM_MAX_RETRIES
 LLM_REQUEST_TIMEOUT = config.LLM_REQUEST_TIMEOUT
 PROGRESS_INTERVAL = config.PROGRESS_INTERVAL
@@ -446,6 +451,7 @@ def process_single_document(
     token_manager: TokenManager,
     target_root_token: Optional[str],
     tag: Dict,
+    rollover: Optional[FolderRolloverManager] = None,
 ) -> Optional[str]:
     """根据已有分类结果执行复制与打标，成功时返回新节点的 node_token。"""
 
@@ -456,25 +462,27 @@ def process_single_document(
     print(f"{'='*60}")
 
     try:
-        tag_count = len(tag)
-        
+        # Exclude sentinel keys from level count
+        level_keys = [k for k in tag.keys() if k.startswith("tag")]
+        tag_count = len(level_keys)
+
         if tag_count == 1:
             copied_node_token = process_single_level_tag(
                 node_token, doc_title, tag, creator,
                 name_checker, SPACE_ID, target_root_token,
-                token_manager
+                token_manager, rollover=rollover,
             )
         elif tag_count == 2:
             copied_node_token = process_two_level_tag(
                 node_token, doc_title, tag, creator,
                 name_checker, SPACE_ID, target_root_token,
-                token_manager
+                token_manager, rollover=rollover,
             )
         elif tag_count >= 3:
             copied_node_token = process_three_level_tag(
                 node_token, doc_title, tag, creator,
                 name_checker, SPACE_ID, target_root_token,
-                token_manager
+                token_manager, rollover=rollover,
             )
         else:
             print(f"❌ 未知的标签格式: {tag}")
@@ -494,6 +502,31 @@ def process_single_document(
         import traceback
         traceback.print_exc()
         return None
+
+
+def evaluate_others_ratio(
+    classify_results: Dict[str, Optional[Dict]],
+    *,
+    threshold: float,
+) -> Tuple[bool, int, int, float]:
+    """
+    Return (ok, others_count, classified_count, ratio).
+    Excluded / failed (None) results are not counted in the denominator.
+    """
+    classified = 0
+    others = 0
+    for tag in classify_results.values():
+        if tag is None or is_excluded_report_tag(tag):
+            continue
+        classified += 1
+        if tag.get("tag1") == ["Others"] or (
+            len(tag) == 1 and tag.get("tag1", [None])[0] == "Others"
+        ):
+            others += 1
+    ratio = (others / classified) if classified else 0.0
+    if threshold <= 0 or classified == 0:
+        return True, others, classified, ratio
+    return ratio <= threshold, others, classified, ratio
 
 def format_tag_message(tag: Dict) -> str:
     """格式化标签消息"""
@@ -536,72 +569,155 @@ def _ensure_child_folder(
     return None
 
 
-def process_single_level_tag(doc_token, doc_title, tag, creator,
-                            name_checker, space_id, parent_token,
-                            token_manager):
+def _resolve_folder_with_rollover(
+    rollover: Optional[FolderRolloverManager],
+    creator: FeishuNodeCreator,
+    name_checker: FolderNameChecker,
+    space_id: str,
+    parent_token: Optional[str],
+    folder_name: str,
+) -> Optional[Tuple[str, str, Optional[str]]]:
+    """
+    Resolve active folder for a classification level.
+    Returns (folder_token, active_title, parent_token) or None.
+    """
+    if rollover is None:
+        token = _ensure_child_folder(
+            creator, name_checker, space_id, parent_token, folder_name
+        )
+        return (token, folder_name, parent_token) if token else None
+
+    resolved = rollover.resolve(parent_token, folder_name)
+    if not resolved:
+        return None
+    token, title = resolved
+    return token, title, parent_token
+
+
+def process_single_level_tag(
+    doc_token,
+    doc_title,
+    tag,
+    creator,
+    name_checker,
+    space_id,
+    parent_token,
+    token_manager,
+    rollover: Optional[FolderRolloverManager] = None,
+):
     """处理单级标签"""
     level1tag = tag["tag1"][0]
-    target_token = _ensure_child_folder(
-        creator, name_checker, space_id, parent_token, level1tag
+    resolved = _resolve_folder_with_rollover(
+        rollover, creator, name_checker, space_id, parent_token, level1tag
     )
-    if not target_token:
+    if not resolved:
         return None
+    target_token, active_title, leaf_parent = resolved
     return copy_document(
-        doc_token, doc_title, target_token, token_manager, name_checker, space_id
+        doc_token,
+        doc_title,
+        target_token,
+        token_manager,
+        name_checker,
+        space_id,
+        rollover=rollover,
+        leaf_parent_token=leaf_parent,
+        leaf_base_name=level1tag,
+        leaf_active_title=active_title,
     )
 
 
-def process_two_level_tag(doc_token, doc_title, tag, creator,
-                         name_checker, space_id, parent_token,
-                         token_manager):
+def process_two_level_tag(
+    doc_token,
+    doc_title,
+    tag,
+    creator,
+    name_checker,
+    space_id,
+    parent_token,
+    token_manager,
+    rollover: Optional[FolderRolloverManager] = None,
+):
     """处理二级标签"""
     level1tag = tag["tag1"][0]
     level2tag = tag["tag2"][0]
 
-    level1_token = _ensure_child_folder(
-        creator, name_checker, space_id, parent_token, level1tag
+    level1 = _resolve_folder_with_rollover(
+        rollover, creator, name_checker, space_id, parent_token, level1tag
     )
-    if not level1_token:
+    if not level1:
         return None
+    level1_token = level1[0]
 
-    target_token = _ensure_child_folder(
-        creator, name_checker, space_id, level1_token, level2tag
+    leaf = _resolve_folder_with_rollover(
+        rollover, creator, name_checker, space_id, level1_token, level2tag
     )
-    if not target_token:
+    if not leaf:
         return None
+    target_token, active_title, leaf_parent = leaf
     return copy_document(
-        doc_token, doc_title, target_token, token_manager, name_checker, space_id
+        doc_token,
+        doc_title,
+        target_token,
+        token_manager,
+        name_checker,
+        space_id,
+        rollover=rollover,
+        leaf_parent_token=leaf_parent,
+        leaf_base_name=level2tag,
+        leaf_active_title=active_title,
     )
 
 
-def process_three_level_tag(doc_token, doc_title, tag, creator,
-                           name_checker, space_id, parent_token,
-                           token_manager):
+def process_three_level_tag(
+    doc_token,
+    doc_title,
+    tag,
+    creator,
+    name_checker,
+    space_id,
+    parent_token,
+    token_manager,
+    rollover: Optional[FolderRolloverManager] = None,
+):
     """处理三级标签"""
     level1tag = tag["tag1"][0]
     level2tag = tag["tag2"][0]
     level3tag = tag["tag3"][0]
 
-    level1_token = _ensure_child_folder(
-        creator, name_checker, space_id, parent_token, level1tag
+    level1 = _resolve_folder_with_rollover(
+        rollover, creator, name_checker, space_id, parent_token, level1tag
     )
-    if not level1_token:
+    if not level1:
         return None
+    level1_token = level1[0]
 
-    level2_token = _ensure_child_folder(
-        creator, name_checker, space_id, level1_token, level2tag
+    level2 = _resolve_folder_with_rollover(
+        rollover, creator, name_checker, space_id, level1_token, level2tag
     )
-    if not level2_token:
+    if not level2:
         return None
+    level2_token = level2[0]
 
-    target_token = _ensure_child_folder(
-        creator, name_checker, space_id, level2_token, level3tag
+    leaf = _resolve_folder_with_rollover(
+        rollover, creator, name_checker, space_id, level2_token, level3tag
     )
-    if not target_token:
+    if not leaf:
         return None
+    target_token, active_title, leaf_parent = leaf
     return copy_document(
-        doc_token, doc_title, target_token, token_manager, name_checker, space_id
+        doc_token,
+        doc_title,
+        target_token,
+        token_manager,
+        name_checker,
+        space_id,
+        rollover=rollover,
+        leaf_parent_token=leaf_parent,
+        leaf_base_name=level3tag,
+        leaf_active_title=active_title,
     )
+
 
 def copy_document(
     doc_token: str,
@@ -610,34 +726,79 @@ def copy_document(
     token_manager: TokenManager,
     name_checker: FolderNameChecker,
     space_id: str,
+    *,
+    rollover: Optional[FolderRolloverManager] = None,
+    leaf_parent_token: Optional[str] = None,
+    leaf_base_name: Optional[str] = None,
+    leaf_active_title: Optional[str] = None,
+    max_rollovers: int = 3,
 ) -> Optional[str]:
-    """复制文档到目标文件夹，成功时返回新节点 node_token。"""
-    try:
-        unique_title = name_checker.resolve_unique_child_title(
-            space_id, target_folder_token, doc_title
-        )
-        if unique_title != doc_title:
-            print(f"📝 目标子目录已有同名文档，使用标题: {unique_title}")
+    """复制文档到目标文件夹；单层超限时自动切换同类型分卷文件夹。"""
+    folder_token = target_folder_token
+    active_title = leaf_active_title or leaf_base_name or ""
 
-        copier = FeishuWikiCopier(
-            token_manager=token_manager,
-            node_token=doc_token,
-            target_folder_token=target_folder_token,
-            new_file_name=unique_title,
-            source_space_id=SPACE_ID,
-            target_space_id=SPACE_ID,
-        )
-        copied_node_token = copier.copy_document_by_node_token()
+    for attempt in range(max_rollovers + 1):
+        try:
+            unique_title = name_checker.resolve_unique_child_title(
+                space_id, folder_token, doc_title
+            )
+            if unique_title != doc_title:
+                print(f"📝 目标子目录已有同名文档，使用标题: {unique_title}")
 
-        if copied_node_token:
-            print(f"✅ 文档复制成功: {unique_title}")
-        else:
-            print(f"❌ 文档复制失败: {unique_title}")
+            copier = FeishuWikiCopier(
+                token_manager=token_manager,
+                node_token=doc_token,
+                target_folder_token=folder_token,
+                new_file_name=unique_title,
+                source_space_id=SPACE_ID,
+                target_space_id=SPACE_ID,
+            )
+            copied_node_token = copier.copy_document_by_node_token()
 
-        return copied_node_token
-    except Exception as e:
-        print(f"❌ 复制文档异常: {e}")
-        return None
+            if copied_node_token:
+                print(f"✅ 文档复制成功: {unique_title}")
+            else:
+                print(f"❌ 文档复制失败: {unique_title}")
+            return copied_node_token
+
+        except FeishuCopyError as e:
+            if (
+                ENABLE_FOLDER_ROLLOVER
+                and rollover is not None
+                and leaf_base_name
+                and is_node_limit_error(e)
+                and attempt < max_rollovers
+            ):
+                print(
+                    f"⚠️ 目标文件夹单层节点超限 (code={e.feishu_code})，"
+                    f"尝试创建同类型新文件夹…"
+                )
+                rolled = rollover.rollover(leaf_parent_token, leaf_base_name)
+                if not rolled:
+                    print(f"❌ 复制文档异常: {e}")
+                    return None
+                folder_token, active_title = rolled
+                continue
+            print(f"❌ 复制文档异常: {e}")
+            return None
+        except Exception as e:
+            if (
+                ENABLE_FOLDER_ROLLOVER
+                and rollover is not None
+                and leaf_base_name
+                and is_node_limit_error(e)
+                and attempt < max_rollovers
+            ):
+                print(f"⚠️ 目标文件夹单层节点超限，尝试创建同类型新文件夹…")
+                rolled = rollover.rollover(leaf_parent_token, leaf_base_name)
+                if not rolled:
+                    print(f"❌ 复制文档异常: {e}")
+                    return None
+                folder_token, active_title = rolled
+                continue
+            print(f"❌ 复制文档异常: {e}")
+            return None
+    return None
 
 def save_classification_failures(
     failures: List[Dict[str, str]],
@@ -738,6 +899,13 @@ def main():
     print(f"   - LLM 模型: {LLM_MODEL} | 网关: {LLM_BASE_URL}")
     print(f"   - 分类正文上限: {CLASSIFY_MAX_CHARS} 字符 | 分类缓存: {USE_CLASSIFY_CACHE}")
     print(f"   - 附件提取转文本: {'开启' if ENABLE_ATTACHMENT_EXTRACT else '关闭'}")
+    print(f"   - 文件夹超限自动分卷: {'开启' if ENABLE_FOLDER_ROLLOVER else '关闭'}")
+    print(
+        f"   - Others 占比失败阈值: "
+        f"{OTHERS_RATIO_FAIL_THRESHOLD:.0%}"
+        if OTHERS_RATIO_FAIL_THRESHOLD > 0
+        else "   - Others 占比失败阈值: 关闭"
+    )
     print(f"   - 多人并行去重: {ENABLE_SHARED_DEDUP}")
     if ENABLE_SCAN_SNAPSHOT:
         print(
@@ -787,6 +955,24 @@ def main():
     creator = FeishuNodeCreator(token_manager, SPACE_ID)
     name_checker = FolderNameChecker(token_manager)
     tag_adder = FeishuDocumentTagAdder(token_manager)
+    rollover: Optional[FolderRolloverManager] = None
+    if ENABLE_FOLDER_ROLLOVER:
+        shared_rollover = None
+        rollover_db = FOLDER_ROLLOVER_DB or default_rollover_db_path(SHARED_STATE_DB)
+        try:
+            shared_rollover = SharedFolderRolloverStore(
+                db_path=rollover_db,
+                worker_id=WORKER_ID or default_worker_id(),
+            )
+            print(f"📂 分卷共享库: {rollover_db}")
+        except Exception as exc:
+            print(f"⚠️ 分卷共享库不可用，回退为本机内存分卷: {exc}")
+        rollover = FolderRolloverManager(
+            lambda parent, name: _ensure_child_folder(
+                creator, name_checker, SPACE_ID, parent, name
+            ),
+            shared_store=shared_rollover,
+        )
     print("✅ 组件初始化完成")
 
     shared_state: Optional[SharedCopyState] = None
@@ -1009,6 +1195,49 @@ def main():
         )
         print(f"✅ 分类完成，耗时 {(datetime.now() - t_cls).total_seconds():.1f}s")
 
+    others_ok, others_n, classified_n, others_ratio = evaluate_others_ratio(
+        classify_results,
+        threshold=OTHERS_RATIO_FAIL_THRESHOLD,
+    )
+    print(
+        f"\n📊 Others 占比检查: {others_n}/{classified_n} = {others_ratio:.1%}"
+        f"（阈值 {OTHERS_RATIO_FAIL_THRESHOLD:.0%}）"
+        if OTHERS_RATIO_FAIL_THRESHOLD > 0
+        else f"\n📊 Others 占比: {others_n}/{classified_n} = {others_ratio:.1%}（检查已关闭）"
+    )
+    if not others_ok:
+        print(
+            "\n❌ 本次分类判定为不精确：Others 占比超过阈值，"
+            "中止复制阶段。请检查模组识别/提示词后重跑。"
+        )
+        import os
+
+        os.makedirs(LOG_DIR, exist_ok=True)
+        others_report = {
+            "run_at": datetime.now().isoformat(),
+            "others_count": others_n,
+            "classified_count": classified_n,
+            "ratio": others_ratio,
+            "threshold": OTHERS_RATIO_FAIL_THRESHOLD,
+            "documents": [
+                {
+                    "obj_token": ot,
+                    "title": read_results.get(ot, ("", None, ""))[0],
+                    "tag": tag,
+                }
+                for ot, tag in classify_results.items()
+                if tag
+                and not is_excluded_report_tag(tag)
+                and tag.get("tag1") == ["Others"]
+            ],
+        }
+        others_path = os.path.join(LOG_DIR, "others_ratio_failure.json")
+        with open(others_path, "w", encoding="utf-8") as f:
+            json.dump(others_report, f, ensure_ascii=False, indent=2)
+        print(f"📄 Others 清单已保存: {others_path}")
+        save_processing_progress(processed_tokens)
+        return
+
     total_unique = len(read_results)
     processed_in_run = 0
 
@@ -1081,7 +1310,8 @@ def main():
 
         copied_node_token = process_single_document(
             node_token, obj_token, doc_title, creator,
-            name_checker, tag_adder, token_manager, target_root_token, tag
+            name_checker, tag_adder, token_manager, target_root_token, tag,
+            rollover=rollover,
         )
 
         if copied_node_token:

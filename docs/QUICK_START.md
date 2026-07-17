@@ -1,7 +1,7 @@
 # AI DocClassifier — 快速上手指南
 
 > 面向周五批量落地 · 多人并行操作手册  
-> 当前推荐分支：`feature/attachment-extract`
+> 当前推荐分支：`feature/classify-quality-restructure`
 
 ---
 
@@ -24,8 +24,8 @@
 # 1. 克隆 / 更新代码
 git clone https://github.com/Leonard49/AI_DocClassifier.git
 cd AI_DocClassifier
-git checkout feature/attachment-extract
-git pull origin feature/attachment-extract
+git checkout feature/classify-quality-restructure
+git pull origin feature/classify-quality-restructure
 
 # 2. Python 环境
 python -m venv .venv
@@ -130,8 +130,8 @@ MAX_DOCUMENTS=10
 
 ```powershell
 git fetch origin
-git checkout feature/attachment-extract
-git pull origin feature/attachment-extract
+git checkout feature/classify-quality-restructure
+git pull origin feature/classify-quality-restructure
 pip install -r requirements.txt   # 依赖有变时执行
 ```
 
@@ -148,9 +148,18 @@ type logs\latest_Hydrew.log
 ### 重试失败的附件提取
 
 ```powershell
-python retry_attachment_extract.py
-python retry_attachment_extract.py --dry-run   # 仅预览
+python -m tools.retry_attachment_extract
+python -m tools.retry_attachment_extract --dry-run
 ```
+
+### 存量 Others 纠偏（移动到正确分类）
+
+```powershell
+python -m tools.reclassify_others_move --dry-run --max-documents 20
+python -m tools.reclassify_others_move --skip-others-ratio-check
+```
+
+详见 [分类准则说明.md](分类准则说明.md)。项目包结构见 [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)。
 
 ---
 
@@ -205,7 +214,7 @@ python retry_attachment_extract.py --dry-run   # 仅预览
 | 飞书 `99991400` / ReadTimeout | 正常现象，程序会自动重试；若频繁出现，确认不同 App + 共享限速库可用 |
 | `database disk image is malformed` | 删共享库 `.db` 及 `-wal`/`-shm`，重跑；保留本地 `processing_progress.json` |
 | 附件 `.doc` 失败 | 需本机安装 LibreOffice 或 Word（自动转换） |
-| 附件提取部分失败 | `python retry_attachment_extract.py` |
+| 附件提取失败 | `python -m tools.retry_attachment_extract` |
 | 各 worker 成功数之和不等于目标总数 | 正常；以**全部跑完后**目标目录实际扫描数为准 |
 
 更多细节见 [AI_DocClassifier说明文档.md](AI_DocClassifier说明文档.md)。

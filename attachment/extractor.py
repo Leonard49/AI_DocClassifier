@@ -14,8 +14,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
-from attachment_extractors import PDFExtractor, PPTExtractor, WordExtractor
-from feishu_http import feishu_request
+from .extractors import PDFExtractor, PPTExtractor, WordExtractor
+from feishu.http import feishu_request
 
 logger = logging.getLogger(__name__)
 

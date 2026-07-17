@@ -1,8 +1,8 @@
 import logging
 from typing import Optional
 
-from token_manager import TokenManager
-from feishu_http import feishu_request
+from .token_manager import TokenManager
+from .http import feishu_request
 
 logger = logging.getLogger(__name__)
 

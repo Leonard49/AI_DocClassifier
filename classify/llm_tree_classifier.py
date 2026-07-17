@@ -22,10 +22,11 @@ from openai import (
     RateLimitError,
 )
 
-from llm_rate_limit import LLM_CONCURRENCY, LLM_RATE_LIMITER
+from .llm_rate_limit import LLM_CONCURRENCY, LLM_RATE_LIMITER
+from .module_product_map import detect_product_line, product_line_prompt_block
 
 if TYPE_CHECKING:
-    from classify_cache import ClassifyCache
+    from .classify_cache import ClassifyCache
 
 RETRYABLE_HTTP_STATUS = frozenset({429, 500, 502, 503, 504})
 
@@ -625,9 +626,24 @@ class LLMTreeClassifier:
 
 6. 输出必须完全匹配树中的名称（大小写敏感）
 
-7. 如果无法匹配，输出：Others
+7. Others 仅作最后手段：只有正文与标签树完全无关、且标题/正文也无任何可识别模组型号时，才输出 Others。
+   若标题或正文出现 Quectel 模组/项目名（如 EC25、BG95、SC200、AG35、LC29、FC41、CC660），
+   必须先按 QT-SOP-PM-048E 产品线规则选择对应顶层域，再在该域下选最匹配叶子路径。
 
-8. 【排除类文档 — 不要分类、不要复制】
+8. 产品线判定优先级（用于选择 tag1）:
+   (1) 标题中明确出现的模组型号所属产品线
+   (2) 正文中作为操作对象、提及次数最多的模组型号所属产品线
+   (3) 来源文件夹域提示（若有）
+   产品线映射速查：
+   - Cellular: EC/EG/BG/BC/RG/RM/EM/UC…（不含 Smart/Automotive）
+   - Automotive: AG/AM…
+   - Smart: SC/SG/SP/SE/SH…、Android/Yocto/BSP
+   - GNSS: LC/LG/LS/L76/L89/LUA…
+   - ShortRange: FC/FCM/HC/KC…、WiFi/BT/Zigbee/LoRa
+   - Satellite: CC…、NTN/D2C/Starlink
+   - QuecOpen: Open SDK / 拨号 API / 外设驱动开发类文档
+
+9. 【排除类文档 — 不要分类、不要复制】
    若标题或正文明确属于以下类型，不属于技术文档分类范围，不要输出标签树路径，只输出一行：
    SKIP:周报  或  SKIP:日报  或  SKIP:会议纪要  或  SKIP:客户问题跟踪
 
@@ -659,12 +675,24 @@ Others
 【分类结果】
 """
 
-    def _build_prompt(self, user_text: str, source_path: Optional[str] = None) -> str:
+    def _build_prompt(
+        self,
+        user_text: str,
+        source_path: Optional[str] = None,
+        title: Optional[str] = None,
+        content: Optional[str] = None,
+    ) -> str:
         """构建用户提示"""
         prompt = self.prompt_template.format(user_text=user_text)
-        block = self._source_domain_prompt_block(source_path)
-        if block:
-            prompt = prompt.replace("【用户文本】", block + "\n【用户文本】")
+        blocks = []
+        module_block = product_line_prompt_block(title, content)
+        if module_block:
+            blocks.append(module_block)
+        source_block = self._source_domain_prompt_block(source_path)
+        if source_block:
+            blocks.append(source_block)
+        if blocks:
+            prompt = prompt.replace("【用户文本】", "\n".join(blocks) + "\n【用户文本】")
         return prompt
 
     @staticmethod
@@ -712,23 +740,32 @@ Others
         path_str: str,
         domain_hint: str,
         user_text: str,
+        *,
+        force_when_others: bool = False,
     ) -> str:
-        """LLM 结果不在来源域子树内时，限定在该域下重新下钻。"""
-        if (
-            not domain_hint
-            or path_str in ("Others", "")
-            or self._path_under_domain(path_str, domain_hint)
-        ):
+        """LLM 结果不在目标域子树内时，限定在该域下重新下钻。"""
+        if not domain_hint:
+            return path_str
+
+        under_domain = self._path_under_domain(path_str, domain_hint)
+        is_others = path_str in ("Others", "")
+        if under_domain:
+            return path_str
+        # Source-folder hint: do not forcibly pull non-Others paths unless mismatched
+        if is_others and not force_when_others:
             return path_str
 
         candidates = self._leaf_descendants(domain_hint)
         if not candidates:
+            if domain_hint in self.leaf_paths:
+                return domain_hint
             return path_str
 
         if self.verbose:
+            reason = "Others 回退" if is_others else "域不一致"
             print(
-                f"📂 来源域优先: '{path_str}' 不在 {domain_hint} 下，"
-                f"改在 {domain_hint} 子树中重选"
+                f"📂 产品线/来源域优先({reason}): '{path_str}' → "
+                f"在 {domain_hint} 子树中重选"
             )
 
         keyword_path = self._keyword_refine_leaf(domain_hint, candidates, user_text)
@@ -980,7 +1017,10 @@ Others
                 print(f"⏭️ 排除类文档（{skip_category}），跳过分类: {title or obj_token}")
             return self.make_excluded_tag(skip_category)
 
-        domain_hint = self.detect_source_domain_hint(source_path)
+        source_domain = self.detect_source_domain_hint(source_path)
+        module_domain = detect_product_line(title, content)
+        # Module evidence from title/content outranks source-folder hint when both exist
+        domain_hint = module_domain or source_domain
 
         if self.cache and obj_token:
             cached = self.cache.get(obj_token, content or "")
@@ -997,10 +1037,18 @@ Others
                     return excluded
                 cached_path = self._tag_to_path(cached)
                 if self._is_leaf_path(cached_path):
-                    if domain_hint and not self._path_under_domain(cached_path, domain_hint):
+                    if cached_path == "Others" and module_domain:
                         if self.verbose:
                             print(
-                                f"📦 忽略与来源域不符的分类缓存: "
+                                f"📦 忽略 Others 缓存（已识别模组产品线 "
+                                f"{module_domain}）: {obj_token}"
+                            )
+                    elif domain_hint and not self._path_under_domain(
+                        cached_path, domain_hint
+                    ):
+                        if self.verbose:
+                            print(
+                                f"📦 忽略与产品线/来源域不符的分类缓存: "
                                 f"{obj_token} -> {cached_path}"
                             )
                     else:
@@ -1011,7 +1059,12 @@ Others
                     print(f"📦 忽略非叶子分类缓存: {obj_token} -> {cached_path}")
 
         truncated = self._prepare_text(content, title)
-        prompt = self._build_prompt(truncated, source_path=source_path)
+        prompt = self._build_prompt(
+            truncated,
+            source_path=source_path,
+            title=title,
+            content=content,
+        )
 
         try:
             raw_path = self._request_path(prompt)
@@ -1044,8 +1097,23 @@ Others
                     except Exception as cache_exc:
                         print(f"警告: 分类缓存写入失败: {cache_exc}")
                 return result
-            if domain_hint:
-                path_str = self._enforce_domain_hint(path_str, domain_hint, truncated)
+
+            # Prefer module-derived product line over source folder when remapping Others
+            if module_domain:
+                path_str = self._enforce_domain_hint(
+                    path_str,
+                    module_domain,
+                    truncated,
+                    force_when_others=True,
+                )
+            elif source_domain:
+                path_str = self._enforce_domain_hint(
+                    path_str,
+                    source_domain,
+                    truncated,
+                    force_when_others=False,
+                )
+
             result = self._path_to_json(path_str)
 
             if self.cache and obj_token:

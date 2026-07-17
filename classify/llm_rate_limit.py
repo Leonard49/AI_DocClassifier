@@ -4,7 +4,7 @@
 
 import threading
 
-from feishu_rate_limit import FeishuRateLimiter
+from feishu.rate_limit import FeishuRateLimiter
 
 # LiteLLM 网关在高并发时易返回 502；限制并发与 QPS
 LLM_RATE_LIMITER = FeishuRateLimiter(max_per_second=1.2)
