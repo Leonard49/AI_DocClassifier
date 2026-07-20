@@ -82,7 +82,7 @@
 |------|------|
 | 包结构重组 | 代码按 `feishu/`、`classify/`、`state/`、`attachment/`、`tools/`、`util/` 划分 |
 | 产品线判定 | QT-SOP-PM-048E 模组/项目名 → 产品线（`classify/module_product_map.py`） |
-| Others 门禁 | `OTHERS_RATIO_FAIL_THRESHOLD`（默认 0.15）超限则整批中止复制 |
+| Others 占比告警 | `OTHERS_RATIO_FAIL_THRESHOLD`（默认 0.15）超限写报告，仍继续复制 |
 | 单层超限分卷 | Feishu 131003 时创建同级 `名称 (2)` 分卷；共享 `folder_rollover_state.db` |
 | Others 存量纠偏 | `tools/reclassify_others_move.py` 重分类后 **move**（非 copy） |
 | 文档 | `docs/分类准则说明.md`、`docs/PROJECT_STRUCTURE.md` |

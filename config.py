@@ -72,7 +72,8 @@ CLASSIFY_WORKERS = _env_int("CLASSIFY_WORKERS", 4)
 CLASSIFY_MAX_CHARS = _env_int("CLASSIFY_MAX_CHARS", 3000)
 USE_CLASSIFY_CACHE = _env_bool("USE_CLASSIFY_CACHE", True)
 CLASSIFY_VERBOSE = _env_bool("CLASSIFY_VERBOSE", False)
-# Fail the run when Others share among classified docs exceeds this ratio (0 disables)
+# Warn when Others share among classified docs exceeds this ratio (0 disables warning).
+# Exceeding the threshold no longer aborts classify/copy; a report is written instead.
 OTHERS_RATIO_FAIL_THRESHOLD = _env_float("OTHERS_RATIO_FAIL_THRESHOLD", 0.15)
 ENABLE_FOLDER_ROLLOVER = _env_bool("ENABLE_FOLDER_ROLLOVER", True)
 FOLDER_ROLLOVER_DB = _env("FOLDER_ROLLOVER_DB")

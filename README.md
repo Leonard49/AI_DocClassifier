@@ -10,7 +10,7 @@
 |------|------|
 | **[快速上手指南](docs/QUICK_START.md)** | **周五落地操作步骤、检查清单、排障速查** |
 | [项目结构](docs/PROJECT_STRUCTURE.md) | 包划分与入口命令 |
-| [分类准则说明](docs/分类准则说明.md) | 产品线判定、Others 门禁、超限分卷 |
+| [分类准则说明](docs/分类准则说明.md) | 产品线判定、Others 占比告警、超限分卷 |
 | [系统说明文档](docs/AI_DocClassifier说明文档.md) | 架构、配置、流程、多人协作、详细排障 |
 | [分支记录](docs/BRANCHES.md) | 各分支变化与选用建议 |
 | [增量方案对比](docs/增量更新方案对比.md) | Plan B 扫描快照方案讨论稿 |
@@ -39,7 +39,7 @@ python main.py
 - 本机断点续跑 + 扫描快照增量 + 全局 `obj_token` 去重（多人并行）
 - 跨进程飞书 API 限速与自动重试（`feishu/http.py`）
 - 基于 QT-SOP-PM-048E 的模组→产品线判定，降低 Others
-- Others 占比超阈值（默认 15%）则整批分类失败并中止复制
+- Others 占比超告警阈值（默认 15%）时写入报告，仍继续复制
 - 目标文件夹单层节点超限（131003）时自动创建 `名称 (2)` 分卷（共享库同步）
 - 存量 `Others` 纠偏：`python -m tools.reclassify_others_move`（重分类后 **move**）
 - 排除周报/日报/会议纪要/重点客户跟踪等非技术文档

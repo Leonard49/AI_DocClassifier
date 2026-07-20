@@ -510,8 +510,9 @@ def evaluate_others_ratio(
     threshold: float,
 ) -> Tuple[bool, int, int, float]:
     """
-    Return (ok, others_count, classified_count, ratio).
+    Return (within_threshold, others_count, classified_count, ratio).
     Excluded / failed (None) results are not counted in the denominator.
+    Callers should treat within_threshold=False as a warning, not an abort.
     """
     classified = 0
     others = 0
@@ -901,10 +902,10 @@ def main():
     print(f"   - 附件提取转文本: {'开启' if ENABLE_ATTACHMENT_EXTRACT else '关闭'}")
     print(f"   - 文件夹超限自动分卷: {'开启' if ENABLE_FOLDER_ROLLOVER else '关闭'}")
     print(
-        f"   - Others 占比失败阈值: "
-        f"{OTHERS_RATIO_FAIL_THRESHOLD:.0%}"
+        f"   - Others 占比告警阈值: "
+        f"{OTHERS_RATIO_FAIL_THRESHOLD:.0%}（超限仍继续复制，仅报告）"
         if OTHERS_RATIO_FAIL_THRESHOLD > 0
-        else "   - Others 占比失败阈值: 关闭"
+        else "   - Others 占比告警阈值: 关闭"
     )
     print(f"   - 多人并行去重: {ENABLE_SHARED_DEDUP}")
     if ENABLE_SCAN_SNAPSHOT:
@@ -1200,23 +1201,28 @@ def main():
         threshold=OTHERS_RATIO_FAIL_THRESHOLD,
     )
     print(
-        f"\n📊 Others 占比检查: {others_n}/{classified_n} = {others_ratio:.1%}"
-        f"（阈值 {OTHERS_RATIO_FAIL_THRESHOLD:.0%}）"
-        if OTHERS_RATIO_FAIL_THRESHOLD > 0
-        else f"\n📊 Others 占比: {others_n}/{classified_n} = {others_ratio:.1%}（检查已关闭）"
+        f"\n📊 本次未精确分类占比（Others）: {others_n}/{classified_n} = {others_ratio:.1%}"
+        + (
+            f"（告警阈值 {OTHERS_RATIO_FAIL_THRESHOLD:.0%}）"
+            if OTHERS_RATIO_FAIL_THRESHOLD > 0
+            else "（告警已关闭）"
+        )
     )
     if not others_ok:
         print(
-            "\n❌ 本次分类判定为不精确：Others 占比超过阈值，"
-            "中止复制阶段。请检查模组识别/提示词后重跑。"
+            "\n⚠️ 本次分类不够精确：Others 占比超过告警阈值，"
+            "仍继续进入复制阶段。请关注报告中的 Others 清单。"
         )
         import os
 
         os.makedirs(LOG_DIR, exist_ok=True)
         others_report = {
             "run_at": datetime.now().isoformat(),
+            "status": "imprecise_warning",
+            "continued_copy": True,
             "others_count": others_n,
             "classified_count": classified_n,
+            "imprecise_ratio": others_ratio,
             "ratio": others_ratio,
             "threshold": OTHERS_RATIO_FAIL_THRESHOLD,
             "documents": [
@@ -1231,12 +1237,14 @@ def main():
                 and tag.get("tag1") == ["Others"]
             ],
         }
-        others_path = os.path.join(LOG_DIR, "others_ratio_failure.json")
+        others_path = os.path.join(LOG_DIR, "others_ratio_report.json")
         with open(others_path, "w", encoding="utf-8") as f:
             json.dump(others_report, f, ensure_ascii=False, indent=2)
-        print(f"📄 Others 清单已保存: {others_path}")
-        save_processing_progress(processed_tokens)
-        return
+        # Keep legacy filename for older tooling / operators.
+        legacy_path = os.path.join(LOG_DIR, "others_ratio_failure.json")
+        with open(legacy_path, "w", encoding="utf-8") as f:
+            json.dump(others_report, f, ensure_ascii=False, indent=2)
+        print(f"📄 未精确分类报告已保存: {others_path}")
 
     total_unique = len(read_results)
     processed_in_run = 0

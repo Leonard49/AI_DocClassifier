@@ -65,7 +65,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument(
         "--skip-others-ratio-check",
         action="store_true",
-        help="跳过本次 Others 占比门禁（存量纠偏时常用）",
+        help="跳过未精确分类占比告警（默认超限仍继续移动，仅少打警告）",
     )
     return p.parse_args()
 
@@ -321,17 +321,17 @@ def main() -> int:
         f"\n📊 重分类结果: 有效 {classified} | 仍为 Others {still_others} "
         f"({ratio:.1%}) | 排除 {excluded} | 空正文 {empty} | 失败 {failed_cls}"
     )
-    if (
+    imprecise = (
         not args.skip_others_ratio_check
         and threshold > 0
         and classified > 0
         and ratio > threshold
-    ):
+    )
+    if imprecise:
         print(
-            f"❌ Others 占比 {ratio:.1%} 超过阈值 {threshold:.0%}，"
-            "中止移动。可用 --skip-others-ratio-check 强制执行。"
+            f"⚠️ 本次未精确分类占比 {ratio:.1%} 超过告警阈值 {threshold:.0%}，"
+            "仍继续移动；详见报告 stats.imprecise_ratio。"
         )
-        return 2
 
     report = {
         "run_at": datetime.now().isoformat(),
@@ -347,6 +347,9 @@ def main() -> int:
             "moved": 0,
             "move_failed": 0,
             "skipped_still_others": 0,
+            "imprecise_ratio": ratio,
+            "imprecise_warning": imprecise,
+            "threshold": threshold,
         },
         "documents": [],
     }
