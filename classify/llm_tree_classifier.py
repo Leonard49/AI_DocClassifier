@@ -509,6 +509,34 @@ class LLMTreeClassifier:
         prefix = f"{parent_path} -> "
         return [path for path in self.leaf_paths if path.startswith(prefix)]
 
+    # When module product-line is known but LLM/refine still yields Others, land here.
+    DOMAIN_FALLBACK_LEAVES = {
+        "Cellular": "Cellular -> 驱动",
+        "Automotive": "Automotive -> 产品介绍",
+        "Smart": "Smart -> 平台安全",
+        "ShortRange": "ShortRange -> AT command",
+        "GNSS": "GNSS -> GNSS产品介绍",
+        "Satellite": "Satellite",
+        "Antenna": "Antenna",
+        "QuecOpen": "QuecOpen",
+    }
+
+    def _fallback_leaf_for_domain(self, domain: str) -> str:
+        """Return a stable leaf under domain; never return Others."""
+        preferred = self.DOMAIN_FALLBACK_LEAVES.get(domain)
+        if preferred and self._is_leaf_path(preferred):
+            return preferred
+        if preferred:
+            kids = self._leaf_descendants(preferred)
+            if kids:
+                return kids[0]
+        kids = self._leaf_descendants(domain)
+        if kids:
+            return kids[0]
+        if domain in self.leaf_paths:
+            return domain
+        return domain
+
     def _keyword_refine_leaf(
         self,
         parent_path: str,
@@ -779,6 +807,12 @@ Others
             return refined
 
         print(f"警告: 无法在 {domain_hint} 子树内找到叶子路径，保留原结果 '{path_str}'")
+        if force_when_others and is_others:
+            fallback = self._fallback_leaf_for_domain(domain_hint)
+            print(
+                f"📂 模组产品线兜底: Others → {fallback}（域 {domain_hint}）"
+            )
+            return fallback
         return path_str
 
     def _build_refinement_prompt(self, parent_path: str, candidates: List[str], user_text: str) -> str:
@@ -1178,6 +1212,12 @@ Others
                     truncated,
                     force_when_others=True,
                 )
+                if path_str in ("Others", ""):
+                    path_str = self._fallback_leaf_for_domain(module_domain)
+                    if self.verbose:
+                        print(
+                            f"📂 模组产品线最终兜底: Others → {path_str}"
+                        )
             elif source_domain:
                 path_str = self._enforce_domain_hint(
                     path_str,

@@ -21,6 +21,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
+# Allow `python tools/reclassify_others_move.py` (IDE Run) as well as
+# `python -m tools.reclassify_others_move` from the repo root.
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
 import config
 from feishu.copy_doc import FeishuCopyError
 from feishu.create_feishu_node import FeishuNodeCreator

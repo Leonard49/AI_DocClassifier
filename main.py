@@ -39,6 +39,7 @@ from classify.llm_tree_classifier import (
     excluded_report_category,
     is_excluded_report_tag,
 )
+from classify.module_product_map import detect_product_line
 from feishu.read_doc import FeishuDocumentReader
 from util.run_logging import setup_run_log
 from state.scan_snapshot import ScanSnapshot
@@ -382,15 +383,19 @@ def batch_classify_documents(
                         False,
                     )
                 cached_path = classifier._tag_to_path(cached_tag)
-                domain_hint = classifier.detect_source_domain_hint(source_path)
-                if (
-                    classifier._is_leaf_path(cached_path)
-                    and (
-                        not domain_hint
-                        or classifier._path_under_domain(cached_path, domain_hint)
-                    )
-                ):
-                    return obj_token, cached_tag, True
+                module_domain = detect_product_line(title, content)
+                source_domain = classifier.detect_source_domain_hint(source_path)
+                domain_hint = module_domain or source_domain
+                if classifier._is_leaf_path(cached_path):
+                    # Stale Others must not block module-aware reclassification.
+                    if cached_path == "Others" and module_domain:
+                        pass
+                    elif domain_hint and not classifier._path_under_domain(
+                        cached_path, domain_hint
+                    ):
+                        pass
+                    else:
+                        return obj_token, cached_tag, True
         tag = classifier.classify(
             content,
             obj_token=obj_token,
