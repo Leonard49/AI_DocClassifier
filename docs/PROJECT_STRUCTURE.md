@@ -19,10 +19,13 @@ AI_DocClassifier/
 │   ├── wiki_move.py
 │   ├── create_feishu_node.py
 │   ├── title_check.py
-│   └── add_tag_block.py
+│   ├── add_tag_block.py
+│   ├── metadata_table.py   # 目标文档开头插入元数据表
+│   └── wiki_meta.py        # 作者显示名
 ├── classify/               # LLM 分类
 │   ├── llm_tree_classifier.py
 │   ├── module_product_map.py
+│   ├── doc_metadata.py     # 产品线/型号/文档类型
 │   ├── others_theme.py     # Others 主题桶（规则/LLM）
 │   ├── classify_cache.py
 │   └── llm_rate_limit.py

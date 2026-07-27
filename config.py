@@ -59,6 +59,9 @@ FALLBACK_PARENT_TOKEN = _env("FALLBACK_PARENT_TOKEN")
 USE_CACHE = _env_bool("USE_CACHE", False)
 MAX_DOCUMENTS = _env_int("MAX_DOCUMENTS", 0) or None
 ENABLE_TAG_ADD = _env_bool("ENABLE_TAG_ADD", True)
+# After copy: insert metadata key/value table at the top of the *target* Docx
+ENABLE_METADATA_TABLE = _env_bool("ENABLE_METADATA_TABLE", True)
+METADATA_TABLE_FETCH_AUTHOR = _env_bool("METADATA_TABLE_FETCH_AUTHOR", True)
 ENABLE_ATTACHMENT_EXTRACT = _env_bool("ENABLE_ATTACHMENT_EXTRACT", False)
 SAVE_PROGRESS = _env_bool("SAVE_PROGRESS", True)
 FORCE_RESCAN = _env_bool("FORCE_RESCAN", False)

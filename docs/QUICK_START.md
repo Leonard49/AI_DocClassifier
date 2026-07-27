@@ -1,7 +1,8 @@
 # AI DocClassifier — 快速上手指南
 
 > 面向批量落地 · 多人并行 / 一人清单增量操作手册  
-> 当前推荐分支：`feature/scan-folders-batch`
+> 当前推荐分支：`feature/scan-folders-batch`  
+> 元数据贴文档开头：`feature/doc-metadata-inline-table`（基于上者）
 
 ---
 
@@ -79,7 +80,8 @@ python main.py --all-assigned
 2. 提取 PDF/Word/PPT 附件正文写回源文档（已开启）
 3. 并行读取 + AI 分类
 4. 串行复制到目标目录（共享去重，不会重复复制）
-5. 结束时扫描目标目录，输出统计
+5. 复制成功后在**目标文档开头**插入元数据表（`ENABLE_METADATA_TABLE`，产品线=分类 tag1）
+6. 结束时扫描目标目录，输出统计
 
 ### 常用清单命令
 

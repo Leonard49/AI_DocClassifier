@@ -113,6 +113,24 @@
 
 ---
 
+## `feature/doc-metadata-inline-table`
+
+**基于：** `feature/scan-folders-batch`
+
+**方案：** 1A（随 `main.py`）+ 2B（产品线=分类 tag1）；与 `feature/doc-metadata-bitable`（独立多维表格工具）互为替代实现。
+
+**主要变化：**
+
+| 能力 | 说明 |
+|------|------|
+| 复制后写元数据表 | 复制成功后在**目标文档**开头插入「文档元数据」二级标题 + 两列表格 |
+| 字段 | 产品线(tag1)、模块型号、文档类型、作者、分类路径、源路径 |
+| 开关 | `ENABLE_METADATA_TABLE`（默认 true）；`METADATA_TABLE_FETCH_AUTHOR` 控制作者解析 |
+
+**关联文件：** `classify/doc_metadata.py`、`feishu/metadata_table.py`、`feishu/wiki_meta.py`、`main.py`
+
+---
+
 ## 分支关系
 
 ```
@@ -121,7 +139,9 @@ master
         └── feature/scan-snapshot-plan-b
               └── feature/attachment-extract
                     └── feature/classify-quality-restructure
-                          └── feature/scan-folders-batch  ← 当前推荐
+                          └── feature/scan-folders-batch  ← 清单批量推荐
+                                ├── feature/doc-metadata-bitable      # 独立工具→多维表格
+                                └── feature/doc-metadata-inline-table # main 复制后→文档内表格
 ```
 
 ## 选用建议
@@ -133,6 +153,8 @@ master
 | 仅需附件提取 + 跨进程限速 | `feature/attachment-extract` |
 | 分类质量 + 分卷 + 包结构 | `feature/classify-quality-restructure` |
 | 生产落地（清单批量增量 + 上述能力） | **`feature/scan-folders-batch`** |
+| 元数据写入多维表格（独立工具） | `feature/doc-metadata-bitable` |
+| 元数据贴到目标文档开头（随 main） | `feature/doc-metadata-inline-table` |
 
 ## 切换与更新
 
