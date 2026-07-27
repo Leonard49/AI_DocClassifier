@@ -72,7 +72,7 @@
 
 ---
 
-## `feature/classify-quality-restructure`（当前推荐）
+## `feature/classify-quality-restructure`
 
 **基于：** `feature/attachment-extract`
 
@@ -93,6 +93,26 @@
 
 ---
 
+## `feature/scan-folders-batch`（当前推荐）
+
+**基于：** `feature/classify-quality-restructure`
+
+**主要变化：**
+
+| 能力 | 说明 |
+|------|------|
+| 源文件夹清单 | `scan_folders.json` 集中记录全部 `SCAN_ROOT` token、名称、`assignee` |
+| 一人批量增量 | `python main.py --all-assigned`（或未设 `SCAN_ROOT_TOKEN` 时直接 `python main.py`）按人跑完全部负责目录 |
+| CLI | `--list-folders` / `--folder ID` / `--all-assigned` / `--all-enabled` / `--folders-file` |
+| Others 主题归档 | `tools/others_theme_classify_move.py`：主题子夹只挂主 Others，并尽量清空 Others (2) |
+| 配置 | `SCAN_FOLDERS_FILE`；`.env.example` 更新 |
+
+**关联文件：** `state/scan_folders.py`、`scan_folders.json`、`scan_folders.example.json`、`main.py`、`classify/others_theme.py`、`tools/others_theme_classify_move.py`
+
+**兼容：** 仍可用 `.env` 的单个 `SCAN_ROOT_TOKEN` 单次运行
+
+---
+
 ## 分支关系
 
 ```
@@ -100,7 +120,8 @@ master
   └── feature/multi-worker-parallel
         └── feature/scan-snapshot-plan-b
               └── feature/attachment-extract
-                    └── feature/classify-quality-restructure  ← 当前推荐
+                    └── feature/classify-quality-restructure
+                          └── feature/scan-folders-batch  ← 当前推荐
 ```
 
 ## 选用建议
@@ -110,16 +131,19 @@ master
 | 单人、小目录、快速试用 | `feature/multi-worker-parallel` |
 | 大目录增量跑、排除周报日报 | `feature/scan-snapshot-plan-b` |
 | 仅需附件提取 + 跨进程限速 | `feature/attachment-extract` |
-| 生产落地（分类质量 + 分卷 + 包结构） | **`feature/classify-quality-restructure`** |
+| 分类质量 + 分卷 + 包结构 | `feature/classify-quality-restructure` |
+| 生产落地（清单批量增量 + 上述能力） | **`feature/scan-folders-batch`** |
 
 ## 切换与更新
 
 ```powershell
 git fetch origin
-git checkout feature/classify-quality-restructure
-git pull origin feature/classify-quality-restructure
+git checkout feature/scan-folders-batch
+git pull origin feature/scan-folders-batch
 copy .env.example .env
-# 编辑 .env 后
+# 编辑 .env（WORKER_ID 与 scan_folders.json 的 assignee 一致）
+# 团队可直接使用仓库内 scan_folders.json，或改 SCAN_FOLDERS_FILE 指向共享盘
 pip install -r requirements.txt
-python main.py
+python main.py --list-folders
+python main.py --all-assigned
 ```

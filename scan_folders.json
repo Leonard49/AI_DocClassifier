@@ -1,0 +1,177 @@
+{
+  "version": 1,
+  "notes": "一人增量更新清单：全部 assignee=Hydrew。运行: python main.py --all-assigned（或清空 .env 的 SCAN_ROOT_TOKEN 后直接 python main.py）",
+  "folders": [
+    {
+      "id": "8.level2-AE-Team",
+      "name": "8.level2 AE Team",
+      "token": "KD0xwfpSVio0bakf9kscrrmJngd",
+      "assignee": "Hydrew",
+      "enabled": true,
+      "priority": 10,
+      "notes": ""
+    },
+    {
+      "id": "9.HF-Domestic-FAE-Team",
+      "name": "9.HF Domestic FAE Team",
+      "token": "A0R6wV0Mci95nXkjQWxcBcSkn0c",
+      "assignee": "Hydrew",
+      "enabled": true,
+      "priority": 20,
+      "notes": ""
+    },
+    {
+      "id": "10.East-China-Team",
+      "name": "10.East China Team",
+      "token": "XvCownhKHigkuLkPFOVcW5FQnre",
+      "assignee": "Hydrew",
+      "enabled": true,
+      "priority": 30,
+      "notes": ""
+    },
+    {
+      "id": "11.-North-China-Team",
+      "name": "11. North China Team",
+      "token": "R7XFwWYT6iVwXfkZzHpcXvn6nwd",
+      "assignee": "Hydrew",
+      "enabled": true,
+      "priority": 40,
+      "notes": ""
+    },
+    {
+      "id": "12.West-China-Team",
+      "name": "12.West China Team",
+      "token": "YxQRwwjFSiFi1EkClUWcfltMn3e",
+      "assignee": "Hydrew",
+      "enabled": true,
+      "priority": 50,
+      "notes": ""
+    },
+    {
+      "id": "13.South-China-Team",
+      "name": "13.South China Team",
+      "token": "Q6LCwKBiYiedAMkXGN2cUWwCnnd",
+      "assignee": "Hydrew",
+      "enabled": true,
+      "priority": 60,
+      "notes": ""
+    },
+    {
+      "id": "14.Zhejiang-Team",
+      "name": "14.Zhejiang Team",
+      "token": "X9RWwEfpAi2wEMkYBehcyN6qnph",
+      "assignee": "Hydrew",
+      "enabled": true,
+      "priority": 70,
+      "notes": ""
+    },
+    {
+      "id": "15.Fujian-Team",
+      "name": "15.Fujian Team",
+      "token": "RRZywx5YHiGDqXkEb03crkLbnrg",
+      "assignee": "Hydrew",
+      "enabled": true,
+      "priority": 80,
+      "notes": ""
+    },
+    {
+      "id": "16.NorthAmerica-FAE-Team",
+      "name": "16.NorthAmerica FAE Team",
+      "token": "TU2Kw6SJriEmXsk6hjPcUAdKnVb",
+      "assignee": "Hydrew",
+      "enabled": true,
+      "priority": 90,
+      "notes": ""
+    },
+    {
+      "id": "17.APAC-Team",
+      "name": "17.APAC Team",
+      "token": "QfFtwRJYYiIFwDk2Y54cwhT6nWb",
+      "assignee": "Hydrew",
+      "enabled": true,
+      "priority": 100,
+      "notes": ""
+    },
+    {
+      "id": "18.EU-team",
+      "name": "18.EU team",
+      "token": "QWDOwE4VBijNc7kMlLYciCb1nQs",
+      "assignee": "Hydrew",
+      "enabled": true,
+      "priority": 110,
+      "notes": ""
+    },
+    {
+      "id": "19.LATAM-Team",
+      "name": "19.LATAM Team",
+      "token": "MRSAwDj7ciGfASkbg22c42CCn1e",
+      "assignee": "Hydrew",
+      "enabled": true,
+      "priority": 120,
+      "notes": ""
+    },
+    {
+      "id": "20.India-Team",
+      "name": "20.India Team",
+      "token": "OcHSwJKVWin37Hkhp1zc9KVqnMg",
+      "assignee": "Hydrew",
+      "enabled": true,
+      "priority": 130,
+      "notes": ""
+    },
+    {
+      "id": "21.TW-Team",
+      "name": "21.TW Team",
+      "token": "INSTwSjGsizOhpky9cQc032Tn5e",
+      "assignee": "Hydrew",
+      "enabled": true,
+      "priority": 140,
+      "notes": ""
+    },
+    {
+      "id": "23.-Belgrade-Team",
+      "name": "23. Belgrade Team",
+      "token": "GObmwd3MDiAlBBkWif3cKpitnEc",
+      "assignee": "Hydrew",
+      "enabled": true,
+      "priority": 150,
+      "notes": ""
+    },
+    {
+      "id": "25.Smart-FAE",
+      "name": "25.Smart FAE",
+      "token": "BTp6whaGhiIeXmkpr3ccVVlPnfh",
+      "assignee": "Hydrew",
+      "enabled": true,
+      "priority": 160,
+      "notes": ""
+    },
+    {
+      "id": "26.Central-China-Team-华中",
+      "name": "26.Central China Team 华中",
+      "token": "T8W4wnWqSiY0DWk8IeAcxA3Yngd",
+      "assignee": "Hydrew",
+      "enabled": true,
+      "priority": 170,
+      "notes": ""
+    },
+    {
+      "id": "27.Guilin-Team",
+      "name": "27.Guilin Team",
+      "token": "L0sewvNrcin3GukaVwscU4yQn8e",
+      "assignee": "Hydrew",
+      "enabled": true,
+      "priority": 180,
+      "notes": ""
+    },
+    {
+      "id": "29-GNSS-FAE",
+      "name": "29 GNSS FAE",
+      "token": "YhAywTKM8iwWVmkLcQQcelNdnVe",
+      "assignee": "Hydrew",
+      "enabled": true,
+      "priority": 190,
+      "notes": ""
+    }
+  ]
+}

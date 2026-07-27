@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "notes": "团队共享源文件夹清单。复制为 scan_folders.json（或放到共享盘并用 SCAN_FOLDERS_FILE 指向）。assignee / assignees 对应各人 .env 里的 WORKER_ID。",
+  "folders": [
+    {
+      "id": "example-smart-faq",
+      "name": "示例-Smart FAQ",
+      "token": "REPLACE_WITH_NODE_TOKEN",
+      "assignee": "Hydrew",
+      "enabled": false,
+      "priority": 10,
+      "notes": "enabled=false 时不会被 --all-assigned / --all-enabled 选中"
+    },
+    {
+      "id": "example-cellular-a",
+      "name": "示例-Cellular 分区A",
+      "token": "REPLACE_WITH_NODE_TOKEN",
+      "assignee": "Alice",
+      "enabled": false,
+      "priority": 20
+    },
+    {
+      "id": "example-shared",
+      "name": "示例-两人共担",
+      "token": "REPLACE_WITH_NODE_TOKEN",
+      "assignees": ["Alice", "Bob"],
+      "enabled": false,
+      "priority": 30,
+      "notes": "多人共担时用 assignees；任一方 --all-assigned 都会跑到"
+    }
+  ]
+}

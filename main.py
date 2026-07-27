@@ -4,6 +4,7 @@
 Feishu wiki document classifier: scan leaf documents, classify with LLM, copy to tagged folders.
 """
 
+import argparse
 import json
 import sys
 import threading
@@ -42,6 +43,13 @@ from classify.llm_tree_classifier import (
 from classify.module_product_map import detect_product_line
 from feishu.read_doc import FeishuDocumentReader
 from util.run_logging import setup_run_log
+from state.scan_folders import (
+    ScanFolder,
+    default_scan_folders_path,
+    filter_folders,
+    format_folder_table,
+    load_scan_folders,
+)
 from state.scan_snapshot import ScanSnapshot
 from state.shared_folder_rollover import SharedFolderRolloverStore, default_rollover_db_path
 from state.shared_state import SharedCopyState, default_worker_id
@@ -887,12 +895,38 @@ def print_excluded_reports_summary(excluded_by_category: Dict[str, List[str]]) -
 # 主函数
 # ============================================================
 
-def main():
-    """主函数"""
+def main(
+    scan_root_override: Optional[str] = None,
+    folder: Optional[ScanFolder] = None,
+    target_override: Optional[str] = None,
+):
+    """主函数。可传入单个源文件夹覆盖（批量模式由 cli 循环调用）。"""
+    global SCAN_ROOT_TOKEN, TARGET_PARENT_TOKEN
+
+    prev_scan = SCAN_ROOT_TOKEN
+    prev_target = TARGET_PARENT_TOKEN
+    try:
+        if scan_root_override:
+            SCAN_ROOT_TOKEN = scan_root_override
+        if folder and folder.target_parent_token:
+            TARGET_PARENT_TOKEN = folder.target_parent_token
+        elif target_override:
+            TARGET_PARENT_TOKEN = target_override
+
+        _run_pipeline(folder=folder)
+    finally:
+        SCAN_ROOT_TOKEN = prev_scan
+        TARGET_PARENT_TOKEN = prev_target
+
+
+def _run_pipeline(folder: Optional[ScanFolder] = None):
+    """单次扫描→分类→复制流水线（使用当前模块级 SCAN_ROOT_TOKEN / TARGET_*）。"""
     start_time = datetime.now()
     print("="*60)
     print("🚀 飞书文档自动分类系统启动")
     print(f"⏰ 开始时间: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+    if folder:
+        print(f"📂 清单项: {folder.id} | {folder.name}")
     print("="*60)
     
     print("\n📋 配置信息:")
@@ -1446,11 +1480,107 @@ def main():
             full_calibration=snapshot_calibration,
         )
 
-if __name__ == "__main__":
+def _parse_cli_args(argv=None):
+    p = argparse.ArgumentParser(
+        description="飞书文档自动分类：支持 scan_folders.json 清单批量 / 按人分工"
+    )
+    p.add_argument(
+        "--list-folders",
+        action="store_true",
+        help="列出 scan_folders.json 中的源文件夹后退出",
+    )
+    p.add_argument(
+        "--folder",
+        action="append",
+        default=None,
+        metavar="ID",
+        help="只处理清单中的指定 id（可多次）",
+    )
+    p.add_argument(
+        "--all-assigned",
+        action="store_true",
+        help="处理 assignee/assignees 匹配当前 WORKER_ID 的全部 enabled 文件夹",
+    )
+    p.add_argument(
+        "--all-enabled",
+        action="store_true",
+        help="处理清单中全部 enabled 文件夹（慎用，通常仅负责人）",
+    )
+    p.add_argument(
+        "--folders-file",
+        default=None,
+        help="覆盖 SCAN_FOLDERS_FILE 路径",
+    )
+    return p.parse_args(argv)
+
+
+def _resolve_batch_folders(args):
+    """
+    Return folder list for batch mode, or None to use legacy single SCAN_ROOT_TOKEN.
+    """
+    path = args.folders_file or config.SCAN_FOLDERS_FILE or default_scan_folders_path()
+    worker = WORKER_ID or default_worker_id()
+
+    explicit = bool(args.folder or args.all_assigned or args.all_enabled or args.list_folders)
+    if not explicit and SCAN_ROOT_TOKEN:
+        return None
+
     try:
-        config.validate()
+        registry = load_scan_folders(path)
+    except ValueError as exc:
+        raise SystemExit(f"❌ 清单无效 ({path}): {exc}") from exc
+
+    if args.list_folders:
+        print(f"📄 清单: {path}")
+        print(f"👷 WORKER_ID: {worker}")
+        print(format_folder_table(registry, worker_id=worker))
+        raise SystemExit(0)
+
+    if args.folder:
+        return filter_folders(
+            registry, ids=args.folder, worker_id=worker, enabled_only=False
+        )
+
+    if args.all_enabled:
+        return filter_folders(registry, enabled_only=True)
+
+    if args.all_assigned or (not SCAN_ROOT_TOKEN and not SCAN_FOLDER_NAME):
+        assigned = filter_folders(
+            registry, worker_id=worker, assigned_only=True, enabled_only=True
+        )
+        if not assigned and not args.all_assigned:
+            if not registry:
+                raise SystemExit(
+                    f"❌ 未配置 SCAN_ROOT_TOKEN，且找不到清单文件: {path}\n"
+                    "   请复制 scan_folders.example.json → scan_folders.json 并填写 token/assignee"
+                )
+            raise SystemExit(
+                f"❌ 清单中没有分配给 WORKER_ID={worker} 的 enabled 文件夹。\n"
+                f"   请检查 {path} 的 assignee，或使用 --folder / --all-enabled / SCAN_ROOT_TOKEN"
+            )
+        return assigned
+
+    return None
+
+
+if __name__ == "__main__":
+    cli_args = _parse_cli_args()
+    try:
+        batch = _resolve_batch_folders(cli_args)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        print(f"❌ 解析文件夹清单失败: {exc}")
+        sys.exit(1)
+
+    try:
+        config.validate(require_scan_source=batch is None)
     except ValueError as exc:
         print(f"❌ 配置错误: {exc}")
+        sys.exit(1)
+
+    if batch is not None and not batch:
+        print("❌ 没有可处理的文件夹（清单为空或全被过滤）")
         sys.exit(1)
 
     log_paths = None
@@ -1460,7 +1590,25 @@ if __name__ == "__main__":
         if log_paths:
             print(f"📝 实时日志: {log_paths['latest']}")
             print(f"📝 归档日志: {log_paths['stamped']}")
-        main()
+
+        if batch is None:
+            main()
+        else:
+            total = len(batch)
+            print(
+                f"\n📚 批量模式: {total} 个源文件夹 | "
+                f"worker={WORKER_ID or default_worker_id()} | "
+                f"file={cli_args.folders_file or config.SCAN_FOLDERS_FILE}"
+            )
+            for i, folder in enumerate(batch, 1):
+                print("\n" + "#" * 60)
+                print(f"# [{i}/{total}] {folder.id} — {folder.name}")
+                print(f"# token={folder.token}")
+                print("#" * 60)
+                main(scan_root_override=folder.token, folder=folder)
+            print("\n" + "=" * 60)
+            print(f"🏁 批量完成: {total} 个源文件夹均已跑完")
+            print("=" * 60)
     except KeyboardInterrupt:
         print("\n\n⚠️ 用户中断程序")
         sys.exit(0)

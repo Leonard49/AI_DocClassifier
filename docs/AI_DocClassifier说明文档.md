@@ -1,8 +1,8 @@
 # AI DocClassifier 系统说明文档
 
 > 飞书知识库文档自动分类系统  
-> 版本：`feature/classify-quality-restructure` 分支  
-> 更新日期：2026-07-17  
+> 版本：`feature/scan-folders-batch` 分支  
+> 更新日期：2026-07-27  
 > 操作手册：[QUICK_START.md](QUICK_START.md)
 
 ---
@@ -58,7 +58,8 @@
 | `feature/multi-worker-parallel` | 多人并行、共享去重、目标目录验证统计 |
 | `feature/scan-snapshot-plan-b` | 扫描快照增量、排除类规则、分类失败清单 |
 | `feature/attachment-extract` | 附件提取合入主流程 |
-| **`feature/classify-quality-restructure`** | **包结构重组 + 分类质量/分卷/Others 纠偏（当前推荐）** |
+| `feature/classify-quality-restructure` | 包结构重组 + 分类质量/分卷/Others 纠偏 |
+| **`feature/scan-folders-batch`** | **源文件夹清单批量增量 + Others 主题归档（当前推荐）** |
 
 ---
 
@@ -195,12 +196,30 @@
 
 ### 5.1 分工模型
 
+**推荐（清单模式）：** 在 `scan_folders.json` 中登记全部源文件夹 token，并用 `assignee` / `assignees` 对应各人 `.env` 的 `WORKER_ID`。每人执行：
+
+```powershell
+python main.py --list-folders
+python main.py --all-assigned
+```
+
+一人承担全部目录时，把所有条目的 `assignee` 设为同一 `WORKER_ID`，然后 `--all-assigned` 即可顺序增量更新。
+
+```
+scan_folders.json
+  ├── folder A  assignee=Hydrew ──┐
+  ├── folder B  assignee=Hydrew ──┼──► 同一 TARGET_PARENT_TOKEN
+  └── folder C  assignee=Alice  ──┘         ▲
+                                            │
+                              SHARED_STATE_DB（共享去重）
+```
+
+**兼容（旧方式）：** 每人 `.env` 只配一个 `SCAN_ROOT_TOKEN`，改 token 后重跑。
+
 ```
 同事 A ── SCAN_ROOT_A ──┐
 同事 B ── SCAN_ROOT_B ──┼──► 同一 TARGET_PARENT_TOKEN
-同事 C ── SCAN_ROOT_C ──┘         ▲
-                                  │
-                    SHARED_STATE_DB（共享去重）
+同事 C ── SCAN_ROOT_C ──┘
 ```
 
 ### 5.2 必须一致 vs 可以不同
@@ -208,9 +227,10 @@
 | 必须一致 | 可以不同 |
 |----------|----------|
 | `SPACE_ID` | `FEISHU_APP_ID` / `FEISHU_APP_SECRET` |
-| `TARGET_PARENT_TOKEN` | `SCAN_ROOT_TOKEN` |
+| `TARGET_PARENT_TOKEN` | 清单中的 `assignee` / 或 `SCAN_ROOT_TOKEN` |
 | `SHARED_STATE_DB` 路径 | `WORKER_ID` |
 | 同一飞书租户 | `LLM_API_KEY` |
+| `scan_folders.json`（或共享盘同一份） | 本机 `SCAN_FOLDERS_FILE` 路径 |
 
 **不同 App ID 的好处：** 飞书 API 限流按应用计频，多人用不同 App 可分摊读文档配额（约 5 req/s/App）。
 
@@ -219,8 +239,9 @@
 **推荐：** 直接 `copy .env.example .env`，模板已按 3～5 人并行预设共享路径与限速参数。
 
 ```env
-WORKER_ID=hydrew
-SCAN_ROOT_TOKEN=token_A
+WORKER_ID=Hydrew
+# SCAN_ROOT_TOKEN=   # 清单模式下可留空
+SCAN_FOLDERS_FILE=scan_folders.json
 TARGET_PARENT_TOKEN=GPFewOUJ1iGBrGks7R7cB137nDh
 SHARED_STATE_DB=\\HF-D-006494B\shared_db\shared_copy_state.db
 FEISHU_RATE_LIMIT_DB=\\HF-D-006494B\shared_db\feishu_rate_limit.db
@@ -232,7 +253,7 @@ READ_WORKERS=2
 CLASSIFY_WORKERS=3
 ```
 
-**同事（UNC 路径）：** 同上，仅改 `WORKER_ID`、`FEISHU_APP_*`、`SCAN_ROOT_TOKEN`、`LLM_API_KEY`。
+**同事：** 同上，改 `WORKER_ID`、`FEISHU_APP_*`、`LLM_API_KEY`；源目录由清单 `assignee` 决定，无需再改单个 token。
 
 共享文件夹需给同事**修改**权限。程序会自动检测网络路径并使用 `DELETE` 日志模式（不用 WAL），降低 SQLite 损坏风险。
 
@@ -257,8 +278,23 @@ CLASSIFY_WORKERS=3
 | `LLM_API_KEY` | LLM 网关 API Key（兼容旧名 `QWEN_API_KEY`） |
 | `LLM_MODEL` | 分类模型名，默认 `deepseek-v4-flash` |
 | `LLM_BASE_URL` | 网关地址，默认 `https://qlitellm.phicotek.com/v1` |
-| `SCAN_ROOT_TOKEN` 或 `SCAN_FOLDER_NAME` | 扫描源（二选一） |
+| `SCAN_ROOT_TOKEN` / `SCAN_FOLDER_NAME` / `scan_folders.json` | 扫描源（三选一；推荐清单） |
 | `TARGET_PARENT_TOKEN` 或 `TARGET_ROOT_NAME` | 复制目标（二选一） |
+
+### 6.1.1 源文件夹清单（推荐）
+
+| 参数 / 文件 | 说明 |
+|-------------|------|
+| `scan_folders.json` | 全部源目录 `id` / `name` / `token` / `assignee` / `enabled` |
+| `SCAN_FOLDERS_FILE` | 清单路径，默认 `scan_folders.json`；可指到共享盘 |
+| `WORKER_ID` | 须与清单 `assignee` 一致，供 `--all-assigned` 过滤 |
+
+```powershell
+python main.py --list-folders
+python main.py --all-assigned
+python main.py --folder 25.Smart-FAE
+python main.py --all-enabled
+```
 
 ### 6.2 多人并行
 
@@ -921,4 +957,4 @@ flowchart LR
 
 ---
 
-*文档对应仓库：AI_DocClassifier · 分支 feature/classify-quality-restructure*
+*文档对应仓库：AI_DocClassifier · 分支 feature/scan-folders-batch*

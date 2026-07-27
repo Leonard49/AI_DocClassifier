@@ -47,6 +47,8 @@ FEISHU_APP_SECRET = _env("FEISHU_APP_SECRET", "")
 SPACE_ID = _env("SPACE_ID", "")
 SCAN_ROOT_TOKEN = _env("SCAN_ROOT_TOKEN")
 SCAN_FOLDER_NAME = _env("SCAN_FOLDER_NAME")
+# Shared registry of source folders (tokens + assignees). See scan_folders.example.json
+SCAN_FOLDERS_FILE = _env("SCAN_FOLDERS_FILE") or "scan_folders.json"
 
 # Destination folder for classified copies
 TARGET_PARENT_TOKEN = _env("TARGET_PARENT_TOKEN")
@@ -102,7 +104,7 @@ FEISHU_API_TIMEOUT = _env_float("FEISHU_API_TIMEOUT", 90.0)
 FEISHU_DOWNLOAD_TIMEOUT = _env_float("FEISHU_DOWNLOAD_TIMEOUT", 180.0)
 
 
-def validate() -> None:
+def validate(*, require_scan_source: bool = True) -> None:
     """Raise ValueError when required settings are missing."""
     missing = []
     if not FEISHU_APP_ID:
@@ -113,8 +115,14 @@ def validate() -> None:
         missing.append("SPACE_ID")
     if not LLM_API_KEY:
         missing.append("LLM_API_KEY")
-    if not SCAN_ROOT_TOKEN and not SCAN_FOLDER_NAME:
-        missing.append("SCAN_ROOT_TOKEN or SCAN_FOLDER_NAME")
+    if require_scan_source and not SCAN_ROOT_TOKEN and not SCAN_FOLDER_NAME:
+        # Registry file may supply tokens (CLI --all-assigned / --folder).
+        has_registry = bool(SCAN_FOLDERS_FILE and os.path.isfile(SCAN_FOLDERS_FILE))
+        if not has_registry:
+            missing.append(
+                "SCAN_ROOT_TOKEN / SCAN_FOLDER_NAME / scan_folders.json "
+                f"(SCAN_FOLDERS_FILE={SCAN_FOLDERS_FILE})"
+            )
     if not TARGET_PARENT_TOKEN and not TARGET_ROOT_NAME:
         missing.append("TARGET_PARENT_TOKEN or TARGET_ROOT_NAME")
 
