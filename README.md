@@ -42,6 +42,7 @@ python main.py
 - Others 占比超告警阈值（默认 15%）时写入报告，仍继续复制
 - 目标文件夹单层节点超限（131003）时自动创建 `名称 (2)` 分卷（共享库同步）
 - 存量 `Others` 纠偏：`python -m tools.reclassify_others_move`（重分类后 **move**）
+- **文档元数据 → 多维表格**：`python -m tools.export_doc_metadata_bitable`（汇总表 + 按 token 分表，独立工具）
 - 排除周报/日报/会议纪要/重点客户跟踪等非技术文档
 - 结束时扫描目标目录，统计实际文档数
 - 附件失败重试：`python -m tools.retry_attachment_extract`
@@ -54,9 +55,11 @@ python main.py
 | `feature/multi-worker-parallel` | 多人并行 + 共享去重 |
 | `feature/scan-snapshot-plan-b` | 扫描快照增量 + 排除类规则 |
 | `feature/attachment-extract` | 附件提取 + 跨进程限速 |
-| **`feature/classify-quality-restructure`** | **包结构 + 分类质量/分卷/Others 纠偏（当前推荐）** |
+| `feature/classify-quality-restructure` | 包结构 + 分类质量/分卷/Others 纠偏 |
+| `feature/scan-folders-batch` | 清单批量增量 + Others 主题归档 |
+| **`feature/doc-metadata-bitable`** | **文档元数据 → 飞书多维表格（汇总 + 按 token 分表）** |
 
 ```powershell
-git checkout feature/classify-quality-restructure
-git pull origin feature/classify-quality-restructure
+git checkout feature/doc-metadata-bitable
+git pull origin feature/doc-metadata-bitable
 ```

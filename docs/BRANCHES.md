@@ -113,6 +113,36 @@
 
 ---
 
+## `feature/doc-metadata-bitable`（当前推荐）
+
+**基于：** `feature/scan-folders-batch`
+
+**主要变化：**
+
+| 能力 | 说明 |
+|------|------|
+| 独立元数据工具 | `tools/export_doc_metadata_bitable.py`：不改 `main.py` 复制流程 |
+| 汇总表 | `--mode aggregated`：TARGET 下「文档元数据汇总」 |
+| 按 token 分表 | `--mode per-token`：每个扫描文件夹一张表（默认 `文档元数据-{id}`） |
+| 双写 | `--mode both`（默认）：汇总 + 分表同时写入 |
+| 元数据字段 | 产品线(tag1)、模块型号、文档类型、作者、源路径、Wiki 链接 |
+| 幂等写入 | 本地 `metadata_bitable_index.db` 按 `(app_token, table_id, obj_token)` upsert |
+| 独立扫描 | 支持 `--scan-token` 不依赖清单；`--no-llm` 时不强制 LLM 配置 |
+
+**关联文件：** `feishu/bitable.py`、`feishu/wiki_meta.py`、`classify/doc_metadata.py`、`state/metadata_bitable.py`、`tools/export_doc_metadata_bitable.py`、`export_doc_metadata_bitable.py`
+
+**飞书权限：** `wiki:wiki`、`bitable:app`；解析作者显示名需联系人只读
+
+**验证示例：**
+
+```powershell
+python -m tools.export_doc_metadata_bitable --folder 29-GNSS-FAE --mode both --max-documents 5 --no-llm --skip-author
+```
+
+报告：`logs/doc_metadata_bitable.json`
+
+---
+
 ## 分支关系
 
 ```
@@ -121,7 +151,8 @@ master
         └── feature/scan-snapshot-plan-b
               └── feature/attachment-extract
                     └── feature/classify-quality-restructure
-                          └── feature/scan-folders-batch  ← 当前推荐
+                          └── feature/scan-folders-batch
+                                └── feature/doc-metadata-bitable  ← 当前推荐
 ```
 
 ## 选用建议
@@ -132,18 +163,18 @@ master
 | 大目录增量跑、排除周报日报 | `feature/scan-snapshot-plan-b` |
 | 仅需附件提取 + 跨进程限速 | `feature/attachment-extract` |
 | 分类质量 + 分卷 + 包结构 | `feature/classify-quality-restructure` |
-| 生产落地（清单批量增量 + 上述能力） | **`feature/scan-folders-batch`** |
+| 生产落地（清单批量增量 + 上述能力） | `feature/scan-folders-batch` |
+| 文档元数据汇总 / 按 token 分表 | **`feature/doc-metadata-bitable`** |
 
 ## 切换与更新
 
 ```powershell
 git fetch origin
-git checkout feature/scan-folders-batch
-git pull origin feature/scan-folders-batch
+git checkout feature/doc-metadata-bitable
+git pull origin feature/doc-metadata-bitable
 copy .env.example .env
-# 编辑 .env（WORKER_ID 与 scan_folders.json 的 assignee 一致）
-# 团队可直接使用仓库内 scan_folders.json，或改 SCAN_FOLDERS_FILE 指向共享盘
+# 编辑 .env（WORKER_ID、TARGET_PARENT_TOKEN、METADATA_BITABLE_*）
 pip install -r requirements.txt
-python main.py --list-folders
-python main.py --all-assigned
+python -m tools.export_doc_metadata_bitable --dry-run --max-documents 20
+python -m tools.export_doc_metadata_bitable --all-enabled --mode both
 ```

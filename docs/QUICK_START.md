@@ -177,6 +177,22 @@ python -m tools.others_theme_classify_move --dry-run
 python -m tools.others_theme_classify_move
 ```
 
+### 文档元数据 → 多维表格
+
+独立工具（不依赖 `main.py` 复制流程）。默认 `mode=both`：
+
+- **aggregated**：在 `--parent-token` / `TARGET_PARENT_TOKEN` 下写一张「文档元数据汇总」
+- **per-token**：按清单文件夹各建一张表（标题默认 `文档元数据-{id}`；可挂 target 同级或源目录下）
+
+```powershell
+python -m tools.export_doc_metadata_bitable --dry-run --max-documents 20
+python -m tools.export_doc_metadata_bitable --all-enabled --mode both
+python -m tools.export_doc_metadata_bitable --folder 29-GNSS-FAE --mode per-token
+python -m tools.export_doc_metadata_bitable --scan-token <wiki_token> --scan-name Demo --mode aggregated
+```
+
+飞书 App 需开通：`bitable:app`、`wiki:wiki`；作者名需联系人只读。
+
 详见 [分类准则说明.md](分类准则说明.md)。项目包结构见 [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)。
 
 ---
@@ -250,6 +266,8 @@ python -m tools.others_theme_classify_move
 | `logs/excluded_reports.json` | 被排除的周报/日报等 |
 | `logs/others_reclassify_move.json` | Others 产品线纠偏报告 |
 | `logs/others_theme_classify_move.json` | Others 主题归档报告 |
+| `logs/doc_metadata_bitable.json` | 文档元数据写入多维表格报告 |
 | `processing_progress.json` | 本机断点续跑（勿手动改） |
 | `scan_snapshot.db` | 本机扫描快照（增量用） |
 | `scan_folders.json` | 源文件夹 token 清单 |
+| `metadata_bitable_index.db` | 多维表格 obj_token→record_id 索引 |

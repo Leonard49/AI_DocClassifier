@@ -103,8 +103,28 @@ FEISHU_API_MAX_RETRIES = _env_int("FEISHU_API_MAX_RETRIES", 5)
 FEISHU_API_TIMEOUT = _env_float("FEISHU_API_TIMEOUT", 90.0)
 FEISHU_DOWNLOAD_TIMEOUT = _env_float("FEISHU_DOWNLOAD_TIMEOUT", 180.0)
 
+# Document metadata → Feishu bitable (standalone tool; not wired into main.py copy)
+METADATA_BITABLE_TITLE = _env("METADATA_BITABLE_TITLE") or "文档元数据汇总"
+METADATA_BITABLE_APP_TOKEN = _env("METADATA_BITABLE_APP_TOKEN")
+METADATA_BITABLE_INDEX_DB = _env("METADATA_BITABLE_INDEX_DB") or "metadata_bitable_index.db"
+METADATA_BITABLE_PER_TOKEN_TITLE_TMPL = (
+    _env("METADATA_BITABLE_PER_TOKEN_TITLE_TMPL") or "文档元数据-{id}"
+)
+# aggregated | per-token | both
+METADATA_BITABLE_MODE = (_env("METADATA_BITABLE_MODE") or "both").strip().lower()
+# Where per-token bitables hang: target (= TARGET / --parent-token) | source (scan root)
+METADATA_BITABLE_PER_TOKEN_PARENT = (
+    _env("METADATA_BITABLE_PER_TOKEN_PARENT") or "target"
+).strip().lower()
+METADATA_USE_LLM_DOC_TYPE = _env_bool("METADATA_USE_LLM_DOC_TYPE", True)
 
-def validate(*, require_scan_source: bool = True) -> None:
+
+def validate(
+    *,
+    require_scan_source: bool = True,
+    require_llm: bool = True,
+    require_target: bool = True,
+) -> None:
     """Raise ValueError when required settings are missing."""
     missing = []
     if not FEISHU_APP_ID:
@@ -113,7 +133,7 @@ def validate(*, require_scan_source: bool = True) -> None:
         missing.append("FEISHU_APP_SECRET")
     if not SPACE_ID:
         missing.append("SPACE_ID")
-    if not LLM_API_KEY:
+    if require_llm and not LLM_API_KEY:
         missing.append("LLM_API_KEY")
     if require_scan_source and not SCAN_ROOT_TOKEN and not SCAN_FOLDER_NAME:
         # Registry file may supply tokens (CLI --all-assigned / --folder).
@@ -123,7 +143,7 @@ def validate(*, require_scan_source: bool = True) -> None:
                 "SCAN_ROOT_TOKEN / SCAN_FOLDER_NAME / scan_folders.json "
                 f"(SCAN_FOLDERS_FILE={SCAN_FOLDERS_FILE})"
             )
-    if not TARGET_PARENT_TOKEN and not TARGET_ROOT_NAME:
+    if require_target and not TARGET_PARENT_TOKEN and not TARGET_ROOT_NAME:
         missing.append("TARGET_PARENT_TOKEN or TARGET_ROOT_NAME")
 
     if missing:

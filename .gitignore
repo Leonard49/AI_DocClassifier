@@ -9,6 +9,7 @@ scan_snapshot.db
 processing_progress.json
 shared_copy_state.db
 folder_rollover_state.db
+metadata_bitable_index.db
 logs/
 run.log
 !logs/.gitkeep
