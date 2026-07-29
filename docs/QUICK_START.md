@@ -1,8 +1,8 @@
 # AI DocClassifier — 快速上手指南
 
 > 面向批量落地 · 多人并行 / 一人清单增量操作手册  
-> 当前可视化分支：`feature/console-ui`（本地 Web 控制台）  
-> 元数据贴文档开头：`feature/doc-metadata-inline-table`  
+> **当前推荐分支：`feature/console-ui`**（本地 Web 控制台 + 分类 + 元数据）  
+> 控制台说明：[CONSOLE.md](CONSOLE.md)
 
 ---
 
@@ -178,8 +178,8 @@ scan_folders.json (assignee=各人 WORKER_ID)
 
 ```powershell
 git fetch origin
-git checkout feature/scan-folders-batch
-git pull origin feature/scan-folders-batch
+git checkout feature/console-ui
+git pull origin feature/console-ui
 pip install -r requirements.txt   # 依赖有变时执行
 ```
 

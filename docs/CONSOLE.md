@@ -1,6 +1,7 @@
 # AI DocClassifier — 本地 Web 控制台使用说明
 
 > 分支：`feature/console-ui`  
+> 更新日期：2026-07-29  
 > 地址：http://127.0.0.1:8787（仅本机）  
 > 启动：双击 `启动控制台.bat`，或 `python run_console.py`
 

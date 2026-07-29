@@ -1,5 +1,7 @@
 # 项目结构
 
+> 对应分支：`feature/console-ui` · 更新 2026-07-29
+
 ```text
 AI_DocClassifier/
 ├── scan_folders.json

@@ -1,6 +1,7 @@
 # 分支变更记录
 
-> 记录各功能分支相对 `master` 的重要变化，便于选型与合并。
+> 记录各功能分支相对 `master` 的重要变化，便于选型与合并。  
+> **当前推荐落地分支：`feature/console-ui`**（2026-07-29）
 
 ---
 
@@ -93,7 +94,7 @@
 
 ---
 
-## `feature/scan-folders-batch`（当前推荐）
+## `feature/scan-folders-batch`
 
 **基于：** `feature/classify-quality-restructure`
 
