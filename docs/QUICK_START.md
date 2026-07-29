@@ -22,6 +22,8 @@ pip install -r requirements.txt
 - **清单分工**：改 `scan_folders.json` 的 assignee / enabled
 - **运行**：一键跑分类复制、元数据多维表格导出等，右侧看实时日志
 
+完整说明见 **[控制台使用说明](CONSOLE.md)**。
+
 ---
 
 ## 一、你需要准备什么

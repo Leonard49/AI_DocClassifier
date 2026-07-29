@@ -144,6 +144,8 @@
 | 元数据任务 | 多维表格导出（per-token / both / aggregated）+ main 复制后贴表（配置开关） |
 | 启动 | 双击 `启动控制台.bat` 或 `python run_console.py` |
 
+**使用说明：** [docs/CONSOLE.md](CONSOLE.md)
+
 **关联文件：** `console/`、`run_console.py`、`启动控制台.bat`
 
 ---
