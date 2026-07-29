@@ -131,6 +131,23 @@
 
 ---
 
+## `feature/console-ui`（可视化控制台）
+
+**基于：** `feature/doc-metadata-inline-table`（并合入多维表格导出工具）
+
+**主要变化：**
+
+| 能力 | 说明 |
+|------|------|
+| 本地 Web 控制台 | `http://127.0.0.1:8787`：配置 `.env`、编辑清单分工、一键跑任务看日志 |
+| 分类任务 | `main.py --all-assigned` / `--folder` / `--list-folders` 等 |
+| 元数据任务 | 多维表格导出（per-token / both / aggregated）+ main 复制后贴表（配置开关） |
+| 启动 | 双击 `启动控制台.bat` 或 `python run_console.py` |
+
+**关联文件：** `console/`、`run_console.py`、`启动控制台.bat`
+
+---
+
 ## 分支关系
 
 ```
@@ -139,9 +156,10 @@ master
         └── feature/scan-snapshot-plan-b
               └── feature/attachment-extract
                     └── feature/classify-quality-restructure
-                          └── feature/scan-folders-batch  ← 清单批量推荐
-                                ├── feature/doc-metadata-bitable      # 独立工具→多维表格
-                                └── feature/doc-metadata-inline-table # main 复制后→文档内表格
+                          └── feature/scan-folders-batch
+                                ├── feature/doc-metadata-bitable
+                                └── feature/doc-metadata-inline-table
+                                      └── feature/console-ui  ← 本地 Web 控制台
 ```
 
 ## 选用建议
@@ -152,20 +170,19 @@ master
 | 大目录增量跑、排除周报日报 | `feature/scan-snapshot-plan-b` |
 | 仅需附件提取 + 跨进程限速 | `feature/attachment-extract` |
 | 分类质量 + 分卷 + 包结构 | `feature/classify-quality-restructure` |
-| 生产落地（清单批量增量 + 上述能力） | **`feature/scan-folders-batch`** |
+| 生产落地（清单批量增量） | `feature/scan-folders-batch` |
 | 元数据写入多维表格（独立工具） | `feature/doc-metadata-bitable` |
 | 元数据贴到目标文档开头（随 main） | `feature/doc-metadata-inline-table` |
+| **图形化配置 + 跑分类/元数据** | **`feature/console-ui`** |
 
 ## 切换与更新
 
 ```powershell
 git fetch origin
-git checkout feature/scan-folders-batch
-git pull origin feature/scan-folders-batch
+git checkout feature/console-ui
+git pull origin feature/console-ui
 copy .env.example .env
-# 编辑 .env（WORKER_ID 与 scan_folders.json 的 assignee 一致）
-# 团队可直接使用仓库内 scan_folders.json，或改 SCAN_FOLDERS_FILE 指向共享盘
 pip install -r requirements.txt
-python main.py --list-folders
-python main.py --all-assigned
+# 双击 启动控制台.bat  或:
+python run_console.py
 ```

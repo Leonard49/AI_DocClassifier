@@ -148,13 +148,20 @@ class SimpleWikiScanner:
         logger.info(f"找到叶子文档: {title} ({node_token})")
         self.stats["documents_found"] += 1
     
-    def scan_space(self, space_id: str, root_token: Optional[str] = None, use_cache: bool = True) -> List[Dict]:
+    def scan_space(
+        self,
+        space_id: str,
+        root_token: Optional[str] = None,
+        use_cache: bool = True,
+        max_documents: int = 0,
+    ) -> List[Dict]:
         """
         扫描知识空间
 
         :param space_id: 空间ID
         :param root_token: 起始节点token（如果指定，只扫描该节点下的内容）
         :param use_cache: 是否使用缓存（False 时不读写 SQLite）
+        :param max_documents: >0 时收集到该数量叶子文档后提前结束
         :return: 文档列表
         """
         self._use_cache = use_cache and self.enable_db_cache
@@ -170,12 +177,16 @@ class SimpleWikiScanner:
         # 如果没有指定 root_token，扫描整个空间
         if not root_token:
             logger.info("未指定根节点，将扫描整个知识库")
-            return self._scan_from_root(space_id, use_cache)
+            return self._scan_from_root(space_id, use_cache, max_documents=max_documents)
         else:
             logger.info(f"指定根节点: {root_token}，只扫描该节点下的内容")
-            return self._scan_from_node(space_id, root_token, use_cache)
+            return self._scan_from_node(
+                space_id, root_token, use_cache, max_documents=max_documents
+            )
     
-    def _scan_from_root(self, space_id: str, use_cache: bool) -> List[Dict]:
+    def _scan_from_root(
+        self, space_id: str, use_cache: bool, max_documents: int = 0
+    ) -> List[Dict]:
         """从根节点扫描整个知识库"""
         all_documents = []
         self.node_registry = {}
@@ -197,6 +208,9 @@ class SimpleWikiScanner:
         processed_count = 0
         
         while pending_nodes:
+            if max_documents > 0 and len(all_documents) >= max_documents:
+                logger.info(f"已达 max_documents={max_documents}，提前结束扫描")
+                break
             current_parent = pending_nodes.popleft()
             parent_key = current_parent if current_parent else "ROOT"
             
@@ -209,6 +223,8 @@ class SimpleWikiScanner:
             has_more = True
             
             while has_more:
+                if max_documents > 0 and len(all_documents) >= max_documents:
+                    break
                 nodes, next_page_token, has_more = self._fetch_nodes(space_id, current_parent, page_token)
                 
                 if nodes is None:
@@ -216,6 +232,8 @@ class SimpleWikiScanner:
                     break
                 
                 for node in nodes:
+                    if max_documents > 0 and len(all_documents) >= max_documents:
+                        break
                     node_token = node.get("node_token")
                     if not node_token:
                         continue
@@ -242,6 +260,8 @@ class SimpleWikiScanner:
                     f"跳过非叶子 docx {self.stats['non_leaf_docx_skipped']} 个"
                 )
         
+        if max_documents > 0 and len(all_documents) > max_documents:
+            all_documents = all_documents[:max_documents]
         logger.info(
             f"扫描完成！共找到 {len(all_documents)} 个叶子文档，"
             f"跳过非叶子 docx {self.stats['non_leaf_docx_skipped']} 个"
@@ -251,7 +271,13 @@ class SimpleWikiScanner:
         
         return all_documents
     
-    def _scan_from_node(self, space_id: str, node_token: str, use_cache: bool) -> List[Dict]:
+    def _scan_from_node(
+        self,
+        space_id: str,
+        node_token: str,
+        use_cache: bool,
+        max_documents: int = 0,
+    ) -> List[Dict]:
         """从指定节点开始扫描（只扫描该节点下的内容）"""
         all_documents = []
         self.node_registry = {}
@@ -275,6 +301,9 @@ class SimpleWikiScanner:
         processed_count = 0
         
         while pending_nodes:
+            if max_documents > 0 and len(all_documents) >= max_documents:
+                logger.info(f"已达 max_documents={max_documents}，提前结束扫描")
+                break
             current_parent = pending_nodes.popleft()
             
             if current_parent in scanned_nodes:
@@ -286,6 +315,8 @@ class SimpleWikiScanner:
             has_more = True
             
             while has_more:
+                if max_documents > 0 and len(all_documents) >= max_documents:
+                    break
                 nodes, next_page_token, has_more = self._fetch_nodes(space_id, current_parent, page_token)
                 
                 if nodes is None:
@@ -293,6 +324,8 @@ class SimpleWikiScanner:
                     break
                 
                 for node in nodes:
+                    if max_documents > 0 and len(all_documents) >= max_documents:
+                        break
                     node_token_child = node.get("node_token")
                     if not node_token_child:
                         continue
@@ -319,6 +352,8 @@ class SimpleWikiScanner:
                     f"跳过非叶子 docx {self.stats['non_leaf_docx_skipped']} 个"
                 )
         
+        if max_documents > 0 and len(all_documents) > max_documents:
+            all_documents = all_documents[:max_documents]
         logger.info(
             f"扫描完成！共找到 {len(all_documents)} 个叶子文档，"
             f"跳过非叶子 docx {self.stats['non_leaf_docx_skipped']} 个"

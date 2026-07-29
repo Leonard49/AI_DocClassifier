@@ -1,8 +1,26 @@
 # AI DocClassifier — 快速上手指南
 
 > 面向批量落地 · 多人并行 / 一人清单增量操作手册  
-> 当前推荐分支：`feature/scan-folders-batch`  
-> 元数据贴文档开头：`feature/doc-metadata-inline-table`（基于上者）
+> 当前可视化分支：`feature/console-ui`（本地 Web 控制台）  
+> 元数据贴文档开头：`feature/doc-metadata-inline-table`  
+
+---
+
+## 零、本地 Web 控制台（推荐）
+
+```powershell
+git checkout feature/console-ui
+git pull origin feature/console-ui
+pip install -r requirements.txt
+# 双击 启动控制台.bat
+# 或: python run_console.py
+```
+
+浏览器打开 http://127.0.0.1:8787 ：
+
+- **配置**：编辑 `.env`（飞书 / LLM / 并行 / 元数据开关）
+- **清单分工**：改 `scan_folders.json` 的 assignee / enabled
+- **运行**：一键跑分类复制、元数据多维表格导出等，右侧看实时日志
 
 ---
 
@@ -25,8 +43,8 @@
 # 1. 克隆 / 更新代码
 git clone https://github.com/Leonard49/AI_DocClassifier.git
 cd AI_DocClassifier
-git checkout feature/scan-folders-batch
-git pull origin feature/scan-folders-batch
+git checkout feature/console-ui
+git pull origin feature/console-ui
 
 # 2. Python 环境
 python -m venv .venv
@@ -52,9 +70,9 @@ TARGET_PARENT_TOKEN=xxx     # 团队统一的目标目录 token
 LLM_API_KEY=sk-xxx
 ```
 
-仓库已带 `scan_folders.json`（全部源目录 token）。一人跑全部时，确认条目 `assignee` 都是你的 `WORKER_ID`。
+仓库已带 `scan_folders.json`（源目录 token + 三人分工示例：Hydrew / Jamie / Hayes）。将 `WORKER_ID` 设为自己的名字即可只跑自己的文件夹；也可用控制台「清单分工」页调整。
 
-其余项已在 `.env.example` 中按 **3～5 人并行** 预设好，一般无需修改。
+其余项已在 `.env.example` 中按 **3～5 人并行** 预设好，一般无需修改。配置也可用控制台「配置」页编辑并保存。
 
 ### 校验配置
 
@@ -90,6 +108,17 @@ python main.py --list-folders
 python main.py --folder 25.Smart-FAE
 python main.py --all-enabled          # 清单内全部（负责人）
 ```
+
+### 元数据多维表格（全量归纳）
+
+```powershell
+# 并行推荐：每人只写自己的分表
+python -m tools.export_doc_metadata_bitable --all-assigned --mode per-token
+# 全部完成后，任一人写汇总表
+python -m tools.export_doc_metadata_bitable --all-enabled --mode aggregated
+```
+
+也可在控制台「运行」页点击对应任务。
 
 ### 运行时长参考（单 worker，约 1400 篇）
 
@@ -252,6 +281,8 @@ python -m tools.others_theme_classify_move
 | `logs/excluded_reports.json` | 被排除的周报/日报等 |
 | `logs/others_reclassify_move.json` | Others 产品线纠偏报告 |
 | `logs/others_theme_classify_move.json` | Others 主题归档报告 |
+| `logs/doc_metadata_bitable.json` | 元数据写入多维表格报告 |
 | `processing_progress.json` | 本机断点续跑（勿手动改） |
 | `scan_snapshot.db` | 本机扫描快照（增量用） |
 | `scan_folders.json` | 源文件夹 token 清单 |
+| `metadata_bitable_index.db` | 多维表格 upsert 本地索引 |

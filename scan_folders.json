@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "notes": "一人增量更新清单：全部 assignee=Hydrew。运行: python main.py --all-assigned（或清空 .env 的 SCAN_ROOT_TOKEN 后直接 python main.py）",
+  "notes": "三人并行元数据归纳（Hydrew / Jamie / Hayes）。每人 .env 设 WORKER_ID=自己名字，然后: python -m tools.export_doc_metadata_bitable --all-assigned --mode per-token。汇总表建议最后由一人跑 --mode aggregated --all-enabled。",
   "folders": [
     {
       "id": "8.level2-AE-Team",
@@ -69,7 +69,7 @@
       "id": "15.Fujian-Team",
       "name": "15.Fujian Team",
       "token": "RRZywx5YHiGDqXkEb03crkLbnrg",
-      "assignee": "Hydrew",
+      "assignee": "Jamie",
       "enabled": true,
       "priority": 80,
       "notes": ""
@@ -78,7 +78,7 @@
       "id": "16.NorthAmerica-FAE-Team",
       "name": "16.NorthAmerica FAE Team",
       "token": "TU2Kw6SJriEmXsk6hjPcUAdKnVb",
-      "assignee": "Hydrew",
+      "assignee": "Jamie",
       "enabled": true,
       "priority": 90,
       "notes": ""
@@ -87,7 +87,7 @@
       "id": "17.APAC-Team",
       "name": "17.APAC Team",
       "token": "QfFtwRJYYiIFwDk2Y54cwhT6nWb",
-      "assignee": "Hydrew",
+      "assignee": "Jamie",
       "enabled": true,
       "priority": 100,
       "notes": ""
@@ -96,7 +96,7 @@
       "id": "18.EU-team",
       "name": "18.EU team",
       "token": "QWDOwE4VBijNc7kMlLYciCb1nQs",
-      "assignee": "Hydrew",
+      "assignee": "Jamie",
       "enabled": true,
       "priority": 110,
       "notes": ""
@@ -105,7 +105,7 @@
       "id": "19.LATAM-Team",
       "name": "19.LATAM Team",
       "token": "MRSAwDj7ciGfASkbg22c42CCn1e",
-      "assignee": "Hydrew",
+      "assignee": "Jamie",
       "enabled": true,
       "priority": 120,
       "notes": ""
@@ -114,7 +114,7 @@
       "id": "20.India-Team",
       "name": "20.India Team",
       "token": "OcHSwJKVWin37Hkhp1zc9KVqnMg",
-      "assignee": "Hydrew",
+      "assignee": "Jamie",
       "enabled": true,
       "priority": 130,
       "notes": ""
@@ -123,7 +123,7 @@
       "id": "21.TW-Team",
       "name": "21.TW Team",
       "token": "INSTwSjGsizOhpky9cQc032Tn5e",
-      "assignee": "Hydrew",
+      "assignee": "Hayes",
       "enabled": true,
       "priority": 140,
       "notes": ""
@@ -132,7 +132,7 @@
       "id": "23.-Belgrade-Team",
       "name": "23. Belgrade Team",
       "token": "GObmwd3MDiAlBBkWif3cKpitnEc",
-      "assignee": "Hydrew",
+      "assignee": "Hayes",
       "enabled": true,
       "priority": 150,
       "notes": ""
@@ -141,7 +141,7 @@
       "id": "25.Smart-FAE",
       "name": "25.Smart FAE",
       "token": "BTp6whaGhiIeXmkpr3ccVVlPnfh",
-      "assignee": "Hydrew",
+      "assignee": "Hayes",
       "enabled": true,
       "priority": 160,
       "notes": ""
@@ -150,7 +150,7 @@
       "id": "26.Central-China-Team-华中",
       "name": "26.Central China Team 华中",
       "token": "T8W4wnWqSiY0DWk8IeAcxA3Yngd",
-      "assignee": "Hydrew",
+      "assignee": "Hayes",
       "enabled": true,
       "priority": 170,
       "notes": ""
@@ -159,7 +159,7 @@
       "id": "27.Guilin-Team",
       "name": "27.Guilin Team",
       "token": "L0sewvNrcin3GukaVwscU4yQn8e",
-      "assignee": "Hydrew",
+      "assignee": "Hayes",
       "enabled": true,
       "priority": 180,
       "notes": ""
@@ -168,7 +168,7 @@
       "id": "29-GNSS-FAE",
       "name": "29 GNSS FAE",
       "token": "YhAywTKM8iwWVmkLcQQcelNdnVe",
-      "assignee": "Hydrew",
+      "assignee": "Hayes",
       "enabled": true,
       "priority": 190,
       "notes": ""

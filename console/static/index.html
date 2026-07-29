@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI DocClassifier Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+  <div class="bg-grid" aria-hidden="true"></div>
+  <header class="top">
+    <div class="brand">
+      <div class="mark" aria-hidden="true"></div>
+      <div>
+        <h1>AI DocClassifier</h1>
+        <p class="tagline">本地控制台 · 配置 · 分类 · 元数据</p>
+      </div>
+    </div>
+    <div class="status-chips" id="statusChips"></div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="run">运行</button>
+    <button class="tab" data-tab="config">配置</button>
+    <button class="tab" data-tab="folders">清单分工</button>
+  </nav>
+
+  <main>
+    <section id="tab-run" class="panel active">
+      <div class="split">
+        <div class="card">
+          <h2>任务</h2>
+          <p class="hint">一次只跑一个任务。日志实时刷在右侧。</p>
+          <div class="job-filters">
+            <button class="chip active" data-cat="all">全部</button>
+            <button class="chip" data-cat="classify">分类</button>
+            <button class="chip" data-cat="metadata">元数据</button>
+            <button class="chip" data-cat="tools">工具</button>
+          </div>
+          <div id="jobList" class="job-list"></div>
+          <div class="folder-pick">
+            <label for="folderSelect">指定 folder id（可选）</label>
+            <select id="folderSelect"></select>
+          </div>
+          <div class="row-actions">
+            <button id="btnStop" class="btn danger" disabled>停止任务</button>
+            <button id="btnRefreshStatus" class="btn ghost">刷新状态</button>
+          </div>
+        </div>
+        <div class="card log-card">
+          <div class="log-head">
+            <h2>输出</h2>
+            <span id="jobBadge" class="badge">空闲</span>
+          </div>
+          <pre id="logView" class="log"></pre>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-config" class="panel">
+      <div class="card">
+        <div class="row-between">
+          <div>
+            <h2>环境配置 (.env)</h2>
+            <p class="hint" id="envPathHint"></p>
+          </div>
+          <div class="row-actions">
+            <label class="check"><input type="checkbox" id="revealSecrets" /> 显示密钥</label>
+            <button id="btnReloadConfig" class="btn ghost">重新加载</button>
+            <button id="btnSaveConfig" class="btn primary">保存</button>
+          </div>
+        </div>
+        <div id="configForm" class="config-form"></div>
+        <p id="configMsg" class="msg" hidden></p>
+      </div>
+    </section>
+
+    <section id="tab-folders" class="panel">
+      <div class="card">
+        <div class="row-between">
+          <div>
+            <h2>scan_folders 分工</h2>
+            <p class="hint" id="foldersPathHint"></p>
+          </div>
+          <div class="row-actions">
+            <button id="btnReloadFolders" class="btn ghost">重新加载</button>
+            <button id="btnSaveFolders" class="btn primary">保存清单</button>
+          </div>
+        </div>
+        <label class="block-label">备注 notes</label>
+        <textarea id="foldersNotes" rows="2"></textarea>
+        <div class="table-wrap">
+          <table id="foldersTable">
+            <thead>
+              <tr>
+                <th>enabled</th>
+                <th>id</th>
+                <th>name</th>
+                <th>assignee</th>
+                <th>priority</th>
+                <th>token</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p id="foldersMsg" class="msg" hidden></p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    仅监听本机 127.0.0.1 · 关闭本窗口不会停止已启动的任务，请用「停止任务」
+  </footer>
+  <script src="/static/app.js"></script>
+</body>
+</html>

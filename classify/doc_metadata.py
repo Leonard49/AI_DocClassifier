@@ -96,6 +96,7 @@ class DocMetadata:
     modules: str
     doc_type: str
     author: str
+    source_folder: str
     source_path: str
     classify_path: str
     wiki_url: str
@@ -111,6 +112,7 @@ class DocMetadata:
             ("文档类型", self.doc_type or DEFAULT_DOC_TYPE),
             ("作者", self.author or "-"),
             ("分类路径", self.classify_path or "-"),
+            ("来源文件夹", self.source_folder or "-"),
             ("源路径", self.source_path or "-"),
         ]
 
@@ -122,6 +124,25 @@ def classify_doc_type_by_rules(title: str, content: str = "") -> Optional[str]:
             if pat.search(text):
                 return dtype
     return None
+
+
+def doc_type_prompt(title: str, content: str) -> str:
+    body = (content or "")[:1200]
+    return (
+        "请把下面文档归入且仅归入下列「文档类型」之一。\n"
+        "只输出类型名称本身，不要解释。\n\n"
+        "可选类型:\n- " + "\n- ".join(DOC_TYPES) + "\n\n"
+        f"标题: {title or '(空)'}\n"
+        f"正文摘录:\n{body or '(空)'}\n"
+    )
+
+
+def parse_doc_type_response(raw: str) -> str:
+    text = (raw or "").strip().splitlines()[0].strip().strip("\"'`")
+    for name in DOC_TYPES:
+        if text == name or name in text:
+            return name
+    return DEFAULT_DOC_TYPE
 
 
 def format_module_models(title: str, content: str = "", *, limit: int = 12) -> str:
@@ -190,6 +211,7 @@ def extract_doc_metadata(
     content: str,
     obj_token: str,
     node_token: str,
+    source_folder: str = "",
     source_path: str = "",
     author: str = "",
     doc_type: Optional[str] = None,
@@ -204,6 +226,7 @@ def extract_doc_metadata(
         modules=format_module_models(title, content),
         doc_type=dtype,
         author=author or "",
+        source_folder=source_folder or "",
         source_path=source_path or "",
         classify_path=format_classify_path(tag),
         wiki_url=build_wiki_url(node_token),
@@ -217,6 +240,8 @@ __all__ = [
     "PRODUCT_LINES",
     "DocMetadata",
     "classify_doc_type_by_rules",
+    "doc_type_prompt",
+    "parse_doc_type_response",
     "format_module_models",
     "format_classify_path",
     "product_line_from_tag",
