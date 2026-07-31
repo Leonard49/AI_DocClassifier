@@ -28,8 +28,12 @@ EXT_TO_KIND = {
     ".pptx": "ppt",
 }
 ATTACHMENT_HEADING_PREFIX = "附件："
+# Banner inserted once before the first newly extracted attachment block.
+ATTACHMENT_SECTION_TITLE = "【附件提取】以下内容由系统从附件自动提取"
+ATTACHMENT_SECTION_PREFIX = "【附件提取】"
 HEADING_BLOCK_TYPES = {3, 4, 5}
 EXTRACTED_CONTENT_BLOCK_TYPES = {2, 27, 31, 32}
+_DIVIDER_BLOCK = {"block_type": 22, "divider": {}}
 
 
 def load_failed_docs_from_report(report_path: str) -> List[Dict[str, Any]]:
@@ -392,6 +396,7 @@ class AttachmentExtractor:
         extracted_count = 0
         skipped_count = 0
         failed_count = 0
+        section_ready = False
 
         for att in attachments:
             heading = f"{ATTACHMENT_HEADING_PREFIX}{att['name']}"
@@ -402,6 +407,14 @@ class AttachmentExtractor:
                 skipped_count += 1
                 print(f"  ⏭️ 已提取，跳过: {att['name']}")
                 continue
+
+            if not section_ready:
+                try:
+                    self._ensure_attachment_section_separator(doc_token)
+                except Exception as exc:
+                    print(f"  ⚠️ 附件分隔区插入失败（继续提取）: {exc}")
+                    logger.warning("附件分隔区插入失败 %s: %s", label, exc)
+                section_ready = True
 
             file_result = self._process_one(doc_token, root_id, att)
             result.files.append(file_result)
@@ -587,6 +600,62 @@ class AttachmentExtractor:
                     if text.startswith(ATTACHMENT_HEADING_PREFIX):
                         headings.add(text.strip())
         return headings
+
+    def _document_has_attachment_section(self, doc_token: str) -> bool:
+        """True if the eye-catching attachment banner was already inserted."""
+        for block in self._iter_blocks(doc_token):
+            if block.get("block_type") not in HEADING_BLOCK_TYPES:
+                continue
+            text = _block_heading_text(block)
+            if text.startswith(ATTACHMENT_SECTION_PREFIX):
+                return True
+        return False
+
+    def _ensure_attachment_section_separator(self, doc_token: str) -> None:
+        """
+        Insert a divider + banner once between original body and extracted
+        attachment content. Idempotent across re-runs.
+        """
+        if self._document_has_attachment_section(doc_token):
+            return
+        extractor = self._extractors["pdf"]
+        extractor.append_blocks(
+            doc_token,
+            [
+                dict(_DIVIDER_BLOCK),
+                {
+                    "block_type": 3,
+                    "heading1": {
+                        "elements": [
+                            {
+                                "text_run": {
+                                    "content": ATTACHMENT_SECTION_TITLE,
+                                    "text_element_style": {"bold": True},
+                                }
+                            }
+                        ]
+                    },
+                },
+                {
+                    "block_type": 2,
+                    "text": {
+                        "elements": [
+                            {
+                                "text_run": {
+                                    "content": (
+                                        "▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼▼"
+                                    ),
+                                    "text_element_style": {"bold": True},
+                                }
+                            }
+                        ]
+                    },
+                },
+                dict(_DIVIDER_BLOCK),
+            ],
+        )
+        print("  📍 已插入附件提取分隔区")
+        logger.info("已插入附件提取分隔区: %s", doc_token)
 
     def _get_root_id(self, doc_token: str) -> Optional[str]:
         if doc_token in self._root_id_cache:
