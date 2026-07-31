@@ -30,10 +30,9 @@ from attachment.extractor import (
 )
 from feishu.add_tag_block import FeishuDocumentTagAdder
 from classify.classify_cache import ClassifyCache
-from classify.doc_metadata import classify_doc_type_by_rules, extract_doc_metadata
+from enrichment.hooks import enrich_after_copy, format_results
 from feishu.copy_doc import FeishuCopyError, FeishuWikiCopier
 from feishu.create_feishu_node import FeishuNodeCreator
-from feishu.metadata_table import MetadataTableInserter
 from feishu.title_check import FolderNameChecker
 from feishu.wiki_meta import WikiMetaClient
 from state.folder_rollover import FolderRolloverManager, is_node_limit_error
@@ -72,6 +71,7 @@ MAX_DOCUMENTS = config.MAX_DOCUMENTS
 ENABLE_TAG_ADD = config.ENABLE_TAG_ADD
 ENABLE_METADATA_TABLE = config.ENABLE_METADATA_TABLE
 METADATA_TABLE_FETCH_AUTHOR = config.METADATA_TABLE_FETCH_AUTHOR
+ENABLE_ATTACHMENT_SEPARATOR = config.ENABLE_ATTACHMENT_SEPARATOR
 ENABLE_ATTACHMENT_EXTRACT = config.ENABLE_ATTACHMENT_EXTRACT
 SAVE_PROGRESS = config.SAVE_PROGRESS
 FORCE_RESCAN = config.FORCE_RESCAN
@@ -473,7 +473,6 @@ def process_single_document(
     *,
     content: str = "",
     source_path: str = "",
-    metadata_inserter: Optional[MetadataTableInserter] = None,
     wiki_meta: Optional[WikiMetaClient] = None,
 ) -> Optional[str]:
     """根据已有分类结果执行复制与打标，成功时返回新节点的 node_token。"""
@@ -518,36 +517,36 @@ def process_single_document(
             else:
                 print("⚠️ 标签块添加失败（复制已成功）")
 
-        if (
-            ENABLE_METADATA_TABLE
-            and copied_node_token
-            and metadata_inserter is not None
+        if copied_node_token and (
+            ENABLE_METADATA_TABLE or ENABLE_ATTACHMENT_SEPARATOR
         ):
             author = ""
-            if METADATA_TABLE_FETCH_AUTHOR and wiki_meta is not None:
+            if (
+                ENABLE_METADATA_TABLE
+                and METADATA_TABLE_FETCH_AUTHOR
+                and wiki_meta is not None
+            ):
                 try:
                     author = wiki_meta.get_author_display_name(node_token)
                 except Exception as exc:
                     print(f"⚠️ 作者解析失败: {exc}")
-            meta = extract_doc_metadata(
+            results = enrich_after_copy(
+                token_manager,
+                target_node_token=copied_node_token,
                 title=doc_title,
-                content=content or "",
                 obj_token=obj_token,
-                node_token=node_token,
+                source_node_token=node_token,
                 source_path=source_path or "",
-                author=author,
-                doc_type=classify_doc_type_by_rules(doc_title, content or ""),
+                content=content or "",
                 tag=tag,
+                author=author or "",
+                enable_metadata_table=ENABLE_METADATA_TABLE,
+                enable_attachment_separator=ENABLE_ATTACHMENT_SEPARATOR,
             )
-            if metadata_inserter.insert_from_metadata(
-                meta, wiki_node_token=copied_node_token
-            ):
-                print(
-                    f"📋 已在目标文档开头插入元数据表 "
-                    f"({meta.product_line} / {meta.doc_type})"
-                )
-            else:
-                print("⚠️ 元数据表插入失败（复制已成功）")
+            print(f"✨ 文档增强: {format_results(results)}")
+            for r in results:
+                if r.status == "failed":
+                    print(f"⚠️ enrichment 失败 [{r.step_id}]: {r.message}")
 
         return copied_node_token
 
@@ -988,6 +987,9 @@ def _run_pipeline(folder: Optional[ScanFolder] = None):
             else ""
         )
     )
+    print(
+        f"   - 附件提取分隔符: {'开启' if ENABLE_ATTACHMENT_SEPARATOR else '关闭'}"
+    )
     print(f"   - 文件夹超限自动分卷: {'开启' if ENABLE_FOLDER_ROLLOVER else '关闭'}")
     print(
         f"   - Others 占比告警阈值: "
@@ -1044,9 +1046,6 @@ def _run_pipeline(folder: Optional[ScanFolder] = None):
     creator = FeishuNodeCreator(token_manager, SPACE_ID)
     name_checker = FolderNameChecker(token_manager)
     tag_adder = FeishuDocumentTagAdder(token_manager)
-    metadata_inserter = (
-        MetadataTableInserter(token_manager) if ENABLE_METADATA_TABLE else None
-    )
     wiki_meta = (
         WikiMetaClient(token_manager)
         if ENABLE_METADATA_TABLE and METADATA_TABLE_FETCH_AUTHOR
@@ -1418,7 +1417,6 @@ def _run_pipeline(folder: Optional[ScanFolder] = None):
             rollover=rollover,
             content=content or "",
             source_path=source_path or representative.get("source_path") or "",
-            metadata_inserter=metadata_inserter,
             wiki_meta=wiki_meta,
         )
 

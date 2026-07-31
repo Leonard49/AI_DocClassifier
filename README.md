@@ -2,7 +2,7 @@
 
 飞书知识库文档自动分类工具：扫描指定目录下的叶子文档，用 LLM 按标签树分类，并复制到目标目录的分类文件夹中。
 
-支持**多人并行**、**扫描快照增量**、**附件提取**、**文档元数据**（贴表 / 多维表格），以及**本地 Web 控制台**配置与一键跑任务。
+支持**多人并行**、**扫描快照增量**、**附件提取**、**文档增强**（贴表 / 附件分隔 / 可扩展回填）、**多维表格元数据**，以及**本地 Web 控制台**配置与一键跑任务。
 
 ## 文档
 
@@ -19,8 +19,8 @@
 ## 快速开始（推荐：控制台）
 
 ```powershell
-git checkout feature/console-ui
-git pull origin feature/console-ui
+git checkout feature/doc-enrichment
+git pull origin feature/doc-enrichment
 
 python -m venv .venv
 .venv\Scripts\activate
@@ -45,7 +45,8 @@ python run_console.py
 - 跨进程飞书 API 限速与自动重试
 - 基于 QT-SOP-PM-048E 的模组→产品线判定，降低 Others
 - Others 占比超告警阈值时写报告，仍继续复制；超限自动分卷
-- **元数据**：复制后贴到目标文档开头；或独立工具写入飞书多维表格（汇总 / 按 token）
+- **文档增强**：复制后贴元数据表 + 附件分隔；`enrichment/` 可扩展；旧副本可用回填工具补齐
+- **多维表格**：独立工具写入飞书 bitable（汇总 / 按 token）
 - 存量 `Others` 纠偏 / 主题归档 / 附件失败重试（`tools/`）
 
 ## 分支概览
@@ -60,9 +61,10 @@ python run_console.py
 | `feature/scan-folders-batch` | 清单批量增量 |
 | `feature/doc-metadata-bitable` | 元数据 → 多维表格（独立工具） |
 | `feature/doc-metadata-inline-table` | 元数据贴目标文档开头 |
-| **`feature/console-ui`** | **本地 Web 控制台 + 分类 + 元数据（当前推荐）** |
+| `feature/console-ui` | 本地 Web 控制台 |
+| **`feature/doc-enrichment`** | **控制台 + enrichment 管道 + 旧副本回填（当前推荐）** |
 
 ```powershell
-git checkout feature/console-ui
-git pull origin feature/console-ui
+git checkout feature/doc-enrichment
+git pull origin feature/doc-enrichment
 ```

@@ -128,6 +128,27 @@ JOB_CATALOG: List[JobSpec] = [
         "tools.retry_attachment_extract",
         [sys.executable, "-m", "tools.retry_attachment_extract"],
     ),
+    JobSpec(
+        "enrich_backfill",
+        "副本增强回填（元数据表+附件分隔）",
+        "tools",
+        "tools.enrich_copied_docs",
+        [sys.executable, "-m", "tools.enrich_copied_docs"],
+    ),
+    JobSpec(
+        "enrich_backfill_dry",
+        "副本增强回填试跑（20 篇 dry-run）",
+        "tools",
+        "enrich_copied_docs --dry-run --limit 20",
+        [
+            sys.executable,
+            "-m",
+            "tools.enrich_copied_docs",
+            "--dry-run",
+            "--limit",
+            "20",
+        ],
+    ),
 ]
 
 

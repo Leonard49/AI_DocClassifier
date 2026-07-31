@@ -1,7 +1,7 @@
 # AI DocClassifier — 快速上手指南
 
 > 面向批量落地 · 多人并行 / 一人清单增量操作手册  
-> **当前推荐分支：`feature/console-ui`**（本地 Web 控制台 + 分类 + 元数据）  
+> **当前推荐分支：`feature/doc-enrichment`**（控制台 + 分类 + 文档增强/回填）  
 > 控制台说明：[CONSOLE.md](CONSOLE.md)
 
 ---
@@ -9,8 +9,8 @@
 ## 零、本地 Web 控制台（推荐）
 
 ```powershell
-git checkout feature/console-ui
-git pull origin feature/console-ui
+git checkout feature/doc-enrichment
+git pull origin feature/doc-enrichment
 pip install -r requirements.txt
 # 双击 启动控制台.bat
 # 或: python run_console.py
@@ -20,7 +20,7 @@ pip install -r requirements.txt
 
 - **配置**：编辑 `.env`（飞书 / LLM / 并行 / 元数据开关）
 - **清单分工**：改 `scan_folders.json` 的 assignee / enabled
-- **运行**：一键跑分类复制、元数据多维表格导出等，右侧看实时日志
+- **运行**：一键跑分类复制、元数据多维表格、**副本增强回填**等，右侧看实时日志
 
 完整说明见 **[控制台使用说明](CONSOLE.md)**。
 
@@ -45,8 +45,8 @@ pip install -r requirements.txt
 # 1. 克隆 / 更新代码
 git clone https://github.com/Leonard49/AI_DocClassifier.git
 cd AI_DocClassifier
-git checkout feature/console-ui
-git pull origin feature/console-ui
+git checkout feature/doc-enrichment
+git pull origin feature/doc-enrichment
 
 # 2. Python 环境
 python -m venv .venv
@@ -100,7 +100,7 @@ python main.py --all-assigned
 2. 提取 PDF/Word/PPT 附件正文写回源文档（已开启）
 3. 并行读取 + AI 分类
 4. 串行复制到目标目录（共享去重，不会重复复制）
-5. 复制成功后在**目标文档开头**插入元数据表（`ENABLE_METADATA_TABLE`，产品线=分类 tag1）
+5. 复制成功后跑文档增强管道（`ENABLE_METADATA_TABLE` 贴表；`ENABLE_ATTACHMENT_SEPARATOR` 附件分隔）。旧副本用 `python -m tools.enrich_copied_docs` 回填
 6. 结束时扫描目标目录，输出统计
 
 ### 常用清单命令
@@ -178,8 +178,8 @@ scan_folders.json (assignee=各人 WORKER_ID)
 
 ```powershell
 git fetch origin
-git checkout feature/console-ui
-git pull origin feature/console-ui
+git checkout feature/doc-enrichment
+git pull origin feature/doc-enrichment
 pip install -r requirements.txt   # 依赖有变时执行
 ```
 
@@ -267,6 +267,7 @@ python -m tools.others_theme_classify_move
 | `database disk image is malformed` | 删共享库 `.db` 及 `-wal`/`-shm`，重跑；保留本地 `processing_progress.json` |
 | 附件 `.doc` 失败 | 需本机安装 LibreOffice 或 Word（自动转换） |
 | 附件提取失败 | `python -m tools.retry_attachment_extract` |
+| 旧副本缺元数据表/附件分隔 | `python -m tools.enrich_copied_docs`（先 `--dry-run`） |
 | 各 worker 成功数之和不等于目标总数 | 正常；以**全部跑完后**目标目录实际扫描数为准 |
 
 更多细节见 [AI_DocClassifier说明文档.md](AI_DocClassifier说明文档.md)。

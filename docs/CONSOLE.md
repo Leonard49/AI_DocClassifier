@@ -1,11 +1,11 @@
 # AI DocClassifier — 本地 Web 控制台使用说明
 
-> 分支：`feature/console-ui`  
-> 更新日期：2026-07-29  
+> 分支：`feature/doc-enrichment`  
+> 更新日期：2026-07-31  
 > 地址：http://127.0.0.1:8787（仅本机）  
 > 启动：双击 `启动控制台.bat`，或 `python run_console.py`
 
-控制台用于：**改配置、改清单分工、一键跑分类/元数据任务并看实时日志**。不替代飞书权限与 `.env` 必填项。
+控制台用于：**改配置、改清单分工、一键跑分类/元数据/副本增强回填并看实时日志**。不替代飞书权限与 `.env` 必填项。
 
 ---
 
@@ -14,8 +14,8 @@
 ```powershell
 git clone https://github.com/Leonard49/AI_DocClassifier.git
 cd AI_DocClassifier
-git checkout feature/console-ui
-git pull origin feature/console-ui
+git checkout feature/doc-enrichment
+git pull origin feature/doc-enrichment
 
 python -m venv .venv
 .venv\Scripts\activate
@@ -52,7 +52,7 @@ notepad .env
 
 ## 2. 日常启动
 
-1. `git pull origin feature/console-ui`
+1. `git pull origin feature/doc-enrichment`
 2. 双击项目根目录 **`启动控制台.bat`**  
    - 或：`.venv\Scripts\activate` 后执行 `python run_console.py`
 3. 浏览器应自动打开 http://127.0.0.1:8787  
@@ -94,7 +94,12 @@ notepad .env
 3. 「停止任务」会尝试中断子进程；复制到一半时飞书侧可能已有部分结果，属正常。  
 4. 关浏览器 **不会** 停任务；要用「停止任务」，或结束黑窗口（会连控制台一起停）。
 
-分类复制时，若 `.env` 开启 `ENABLE_METADATA_TABLE=true`，成功复制的目标文档开头会自动贴元数据表。
+分类复制成功后，会跑 `enrichment` 管道（默认：贴元数据表 + 附件分隔符，均幂等）。已复制的旧文档可用任务「副本增强回填」或：
+
+```bash
+python -m tools.enrich_copied_docs --dry-run --limit 20
+python -m tools.enrich_copied_docs
+```
 
 ### 3.2 配置
 
@@ -110,6 +115,7 @@ notepad .env
 | 配置 | 建议 |
 |------|------|
 | `ENABLE_METADATA_TABLE` | 分类复制后是否贴表（默认开） |
+| `ENABLE_ATTACHMENT_SEPARATOR` | 复制后/回填是否加附件分隔符（默认开） |
 | `MAX_DOCUMENTS` | 试跑时设 `10`；全量设 `0` |
 | `METADATA_BITABLE_MODE` | 命令行默认；控制台任务按钮已带 `--mode` |
 | `ENABLE_ATTACHMENT_EXTRACT` | 附件提取，耗时长 |

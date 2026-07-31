@@ -8,13 +8,14 @@ import uuid
 from typing import List, Optional, Sequence, Tuple
 
 from classify.doc_metadata import DocMetadata
+from enrichment.markers import METADATA_HEADING_TITLE
 from .add_tag_block import FeishuDocumentTagAdder
 from .http import feishu_request
 from .token_manager import TokenManager
 
 logger = logging.getLogger(__name__)
 
-_HEADING_TITLE = "文档元数据"
+_HEADING_TITLE = METADATA_HEADING_TITLE
 
 
 def _tmp_id(prefix: str) -> str:

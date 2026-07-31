@@ -1,8 +1,8 @@
 # AI DocClassifier 系统说明文档
 
 > 飞书知识库文档自动分类系统  
-> 版本：`feature/console-ui` 分支（含清单批量、元数据贴表/多维表格、本地 Web 控制台）  
-> 更新日期：2026-07-29  
+> 版本：`feature/doc-enrichment` 分支（含控制台、元数据贴表/多维表格、文档增强回填）  
+> 更新日期：2026-07-31  
 > 操作手册：[QUICK_START.md](QUICK_START.md) · 控制台：[CONSOLE.md](CONSOLE.md) · 分支：[BRANCHES.md](BRANCHES.md)
 
 ---
@@ -35,9 +35,9 @@
 2. 可选：将文档内 **PDF/Word/PPT 附件**提取为文本写回源文档（`ENABLE_ATTACHMENT_EXTRACT`）
 3. 读取正文，调用 **LLM**（经 OpenAI 兼容网关，默认 `deepseek-v4-flash`）按预定义标签树分类
 4. 在**目标目录**（`TARGET_PARENT_TOKEN`）下按分类创建文件夹并**复制**文档
-5. 可选：复制成功后在**目标文档开头**插入元数据表（`ENABLE_METADATA_TABLE`）
+5. 复制成功后跑 **enrichment 管道**（贴元数据表 / 附件醒目分隔符等，均可幂等开关）
 6. 可选：在**原文档**插入分类标签块（`ENABLE_TAG_ADD`）
-7. 可选：独立工具将元数据写入飞书**多维表格**（汇总表 / 按 token 分表）
+7. 可选：独立工具将元数据写入飞书**多维表格**；或对已复制文档 **回填增强**（`tools.enrich_copied_docs`）
 8. 可用**本地 Web 控制台**配置参数、改清单分工、一键跑任务看日志
 
 ### 1.2 架构特点
@@ -47,10 +47,11 @@
   → [可选] 附件提取写回源文档（PDF/Word/PPT）
   → 并行读取正文（READ_WORKERS，飞书限速）
   → 并行 AI 分类（CLASSIFY_WORKERS，LLM 全局并发≤2）
-  → 串行复制 + [可选]目标文档贴元数据表 + [可选]源文档打标
+  → 串行复制 + enrichment 管道（贴表 / 附件分隔）+ [可选]源文档打标
   → 扫描目标目录验证数量
 
 旁路：tools.export_doc_metadata_bitable → 多维表格
+旁路：tools.enrich_copied_docs → 旧副本增强回填
 入口：main.py / run_console.py（http://127.0.0.1:8787）
 ```
 
@@ -68,7 +69,8 @@
 | `feature/scan-folders-batch` | 源文件夹清单批量增量 + Others 主题归档 |
 | `feature/doc-metadata-bitable` | 元数据 → 多维表格（独立工具） |
 | `feature/doc-metadata-inline-table` | 元数据贴目标文档开头（随 main） |
-| **`feature/console-ui`** | **本地 Web 控制台 + 上述能力合入（当前推荐）** |
+| `feature/console-ui` | 本地 Web 控制台 + 分类/元数据任务 |
+| **`feature/doc-enrichment`** | **可扩展 enrichment + 旧副本回填（当前推荐）** |
 
 ---
 ## 二、项目结构
@@ -97,11 +99,12 @@
 | 移动 | `feishu/wiki_move.py` | wiki move API（Others 纠偏） |
 | 打标 | `feishu/add_tag_block.py` | 原文档插入标签块 |
 | 贴元数据表 | `feishu/metadata_table.py` | 目标 Docx 开头插入元数据表格 |
+| **文档增强** | **`enrichment/`** | 复制后/回填插件管道（贴表、附件分隔、可扩展） |
 | 多维表格 API | `feishu/bitable.py` | bitable 建表/写记录 |
 | 作者解析 | `feishu/wiki_meta.py` | wiki 节点 owner → 显示名 |
 | 飞书限速 | `feishu/http.py` | 跨进程 + 本进程限速、自动重试 |
 | LLM 限速 | `classify/llm_rate_limit.py` | LLM 并发≤2 |
-| 运维脚本 | `tools/` | 附件重试、Others 纠偏、元数据导出 |
+| 运维脚本 | `tools/` | 附件重试、Others 纠偏、元数据导出、副本增强回填 |
 | 日志 | `util/run_logging.py` | 终端输出写入 `logs/` |
 
 ---
@@ -166,7 +169,7 @@
 3. 目标子目录已有同名文档 → 自动重命名为 `标题 (2)`、`标题 (3)` …
 4. wiki copy API 复制
 5. `mark_copied()` 写入共享库（失败只告警，不中断；本地进度仍保存）
-6. 可选：在**目标副本**开头插入元数据表（`ENABLE_METADATA_TABLE`）
+6. 调用 `enrich_after_copy()`：按开关贴元数据表 / 插入附件分隔符（均幂等）
 7. 可选：在**原文档**打标（`ENABLE_TAG_ADD`）
 8. 每 5 篇保存 `processing_progress.json`
 
@@ -344,8 +347,9 @@ python main.py --all-enabled
 | `SAVE_PROGRESS` | `true` | 保存本机进度到 `processing_progress.json` |
 | `FORCE_RESCAN` | `false` | 忽略 progress，全量重跑 |
 | `ENABLE_TAG_ADD` | `true` | 复制后在原文档插入标签块 |
-| `ENABLE_METADATA_TABLE` | `true` | 复制后在**目标文档**开头插入元数据表 |
+| `ENABLE_METADATA_TABLE` | `true` | enrichment：在**目标文档**开头插入元数据表 |
 | `METADATA_TABLE_FETCH_AUTHOR` | `true` | 贴表时解析作者显示名 |
+| `ENABLE_ATTACHMENT_SEPARATOR` | `true` | enrichment：在「附件：」前插入醒目分隔符（幂等） |
 | `ENABLE_ATTACHMENT_EXTRACT` | `false` | 将 PDF/Word/PPT 附件提取为文本写回源文档 |
 | `MAX_DOCUMENTS` | 无限制 | 测试用：只处理前 N 篇（`0`=不限制） |
 | `SAVE_RUN_LOG` | `true` | 日志写入 `logs/` |
@@ -592,17 +596,25 @@ python -m tools.retry_attachment_extract
 见 **[CONSOLE.md](CONSOLE.md)**。简要：
 
 ```powershell
-git checkout feature/console-ui
+git checkout feature/doc-enrichment
 pip install -r requirements.txt
 # 双击 启动控制台.bat  → http://127.0.0.1:8787
 ```
 
-### Q11：元数据贴表和多维表格有什么区别？
+### Q11：元数据贴表、附件分隔和多维表格有什么区别？
 
 | 方式 | 时机 | 落点 |
 |------|------|------|
-| 贴表（`ENABLE_METADATA_TABLE`） | `main.py` 复制成功后 | **目标文档**开头表格 |
+| enrichment 贴表（`ENABLE_METADATA_TABLE`） | 复制成功后 / 回填工具 | **目标副本**开头表格 |
+| enrichment 附件分隔（`ENABLE_ATTACHMENT_SEPARATOR`） | 复制成功后 / 回填 / 附件提取时 | 「附件：」标题前醒目横幅 |
 | 多维表格工具 | 独立扫描源目录 | TARGET 下 bitable（汇总 / 按 token） |
+
+旧副本（去重跳过、不会再走复制后钩子）请用：
+
+```powershell
+python -m tools.enrich_copied_docs --dry-run --limit 20
+python -m tools.enrich_copied_docs
+```
 
 ### Q12：已知风险（生产环境）
 
@@ -622,8 +634,8 @@ pip install -r requirements.txt
 
 ```powershell
 # 1. 环境
-git checkout feature/console-ui
-git pull origin feature/console-ui
+git checkout feature/doc-enrichment
+git pull origin feature/doc-enrichment
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
@@ -648,8 +660,8 @@ python main.py --all-assigned
 
 ```powershell
 git fetch origin
-git checkout feature/console-ui
-git pull origin feature/console-ui
+git checkout feature/doc-enrichment
+git pull origin feature/doc-enrichment
 ```
 
 ---
@@ -1023,4 +1035,4 @@ flowchart LR
 
 ---
 
-*文档对应仓库：AI_DocClassifier · 分支 feature/console-ui · 更新 2026-07-29*
+*文档对应仓库：AI_DocClassifier · 分支 feature/doc-enrichment · 更新 2026-07-31*

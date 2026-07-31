@@ -9,7 +9,7 @@ import socket
 import sqlite3
 import threading
 from datetime import datetime, timedelta
-from typing import Callable, Dict, Optional, Set, TypeVar
+from typing import Any, Callable, Dict, List, Optional, Set, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -289,3 +289,35 @@ class SharedCopyState:
             return {"total_copied": total, "worker_copied": mine}
 
         return self._with_db(_stats, {"total_copied": 0, "worker_copied": 0})
+
+    def list_copied(
+        self,
+        *,
+        scan_root: Optional[str] = None,
+        require_copied_node: bool = True,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return copied registry rows for enrichment backfill."""
+
+        def _query(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
+            sql = """
+                SELECT obj_token, title, source_node_token, copied_node_token,
+                       target_parent_token, target_folder_token, scan_root,
+                       worker_id, updated_at
+                FROM copy_registry
+                WHERE status = 'copied'
+            """
+            params: List[Any] = []
+            if require_copied_node:
+                sql += " AND copied_node_token IS NOT NULL AND copied_node_token != ''"
+            if scan_root:
+                sql += " AND scan_root = ?"
+                params.append(scan_root)
+            sql += " ORDER BY updated_at ASC"
+            if limit and limit > 0:
+                sql += " LIMIT ?"
+                params.append(int(limit))
+            rows = conn.execute(sql, params).fetchall()
+            return [dict(row) for row in rows]
+
+        return self._with_db(_query, [])

@@ -1,7 +1,7 @@
 # 分支变更记录
 
 > 记录各功能分支相对 `master` 的重要变化，便于选型与合并。  
-> **当前推荐落地分支：`feature/console-ui`**（2026-07-29）
+> **当前推荐落地分支：`feature/doc-enrichment`**（2026-07-31）
 
 ---
 
@@ -151,6 +151,27 @@
 
 ---
 
+## `feature/doc-enrichment`（文档增强管道）
+
+**基于：** `feature/console-ui`
+
+**主要变化：**
+
+| 能力 | 说明 |
+|------|------|
+| 插件式 enrichment | 新包 `enrichment/`：步骤可扩展，不把逻辑堆进 `main.py` |
+| 复制后钩子 | `enrich_after_copy()`：贴元数据表 + 附件醒目分隔符（幂等） |
+| 旧副本回填 | `tools/enrich_copied_docs.py` 读 `shared_copy_state`，对已复制文档补齐增强 |
+| 附件分隔共享 | `enrichment/markers.py` 与 `attachment/extractor.py` 共用横幅块 |
+| 开关 | `ENABLE_METADATA_TABLE`；`ENABLE_ATTACHMENT_SEPARATOR`（默认 true） |
+| 控制台任务 | 「副本增强回填」/ dry-run |
+
+**扩展方式：** 新增 `EnrichmentStep` → 挂入 `default_steps()` → 新复制与回填自动生效。
+
+**关联文件：** `enrichment/`、`tools/enrich_copied_docs.py`、`main.py`（仅钩子）、`state/shared_state.py`（`list_copied`）
+
+---
+
 ## 分支关系
 
 ```
@@ -162,7 +183,8 @@ master
                           └── feature/scan-folders-batch
                                 ├── feature/doc-metadata-bitable
                                 └── feature/doc-metadata-inline-table
-                                      └── feature/console-ui  ← 本地 Web 控制台
+                                      └── feature/console-ui
+                                            └── feature/doc-enrichment  ← 当前推荐
 ```
 
 ## 选用建议
@@ -176,16 +198,20 @@ master
 | 生产落地（清单批量增量） | `feature/scan-folders-batch` |
 | 元数据写入多维表格（独立工具） | `feature/doc-metadata-bitable` |
 | 元数据贴到目标文档开头（随 main） | `feature/doc-metadata-inline-table` |
-| **图形化配置 + 跑分类/元数据** | **`feature/console-ui`** |
+| 图形化配置 + 跑分类/元数据 | `feature/console-ui` |
+| **生产推荐（含旧副本回填 / 可扩展增强）** | **`feature/doc-enrichment`** |
 
 ## 切换与更新
 
 ```powershell
 git fetch origin
-git checkout feature/console-ui
-git pull origin feature/console-ui
+git checkout feature/doc-enrichment
+git pull origin feature/doc-enrichment
 copy .env.example .env
 pip install -r requirements.txt
 # 双击 启动控制台.bat  或:
 python run_console.py
+# 旧副本补元数据表 / 附件分隔:
+python -m tools.enrich_copied_docs --dry-run --limit 20
+python -m tools.enrich_copied_docs
 ```
