@@ -56,6 +56,15 @@ CONFIG_SCHEMA: List[Tuple[str, str, str, str]] = [
     ("METADATA_BITABLE_PER_TOKEN_TITLE_TMPL", "分表标题模板", "metadata", "str"),
     ("METADATA_BITABLE_PER_TOKEN_PARENT", "分表挂载位置", "metadata", "str"),
     ("METADATA_USE_LLM_DOC_TYPE", "文档类型用 LLM", "metadata", "bool"),
+    ("METADATA_BITABLE_SKIP_EXISTING", "元数据表已写跳过", "metadata", "bool"),
+    ("TOOL_DOC_SCOPE", "工具文档范围(target/scan)", "metadata", "str"),
+    ("TOOL_OPS_DB", "工具操作账本路径", "metadata", "path"),
+    ("DISPLAY_TITLE_BITABLE_MODE", "展示标题表模式", "metadata", "str"),
+    ("DISPLAY_TITLE_BITABLE_TITLE", "展示标题汇总表名", "metadata", "str"),
+    ("DISPLAY_TITLE_BITABLE_APP_TOKEN", "已有展示标题 app_token", "metadata", "str"),
+    ("DISPLAY_TITLE_USE_LLM_PURPOSE", "展示标题文章作用用 LLM", "metadata", "bool"),
+    ("DISPLAY_TITLE_SKIP_EXISTING", "展示标题已写跳过", "metadata", "bool"),
+    ("ENRICHMENT_SKIP_EXISTING", "副本增强已写跳过", "classify", "bool"),
 ]
 
 GROUP_LABELS = {

@@ -49,13 +49,14 @@ from feishu.read_doc import FeishuDocumentReader
 from feishu.title_check import FolderNameChecker
 from feishu.token_manager import TokenManager
 from feishu.wiki_meta import WikiMetaClient
-from feishu.wiki_scanner import SimpleWikiScanner
 from state.metadata_bitable import (
     MetadataBitableRef,
     MetadataRecordIndex,
     ensure_metadata_bitable,
+    find_metadata_bitable,
     upsert_metadata_record,
 )
+from state.operation_ledger import OP_METADATA_BITABLE
 from state.scan_folders import (
     ScanFolder,
     default_scan_folders_path,
@@ -64,6 +65,15 @@ from state.scan_folders import (
     load_scan_folders,
 )
 from state.shared_state import default_worker_id
+from tools._tool_scope import (
+    SCOPE_SCAN,
+    SCOPE_TARGET,
+    load_tool_documents,
+    open_tool_ledger,
+    resolve_scan_folders_from_args,
+    resolve_scope,
+    resolve_skip_existing,
+)
 
 from openai import OpenAI
 
@@ -77,8 +87,14 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument("--dry-run", action="store_true", help="只提取打印，不创建/写入多维表格")
     p.add_argument("--list-folders", action="store_true", help="列出清单后退出")
+    p.add_argument(
+        "--scope",
+        choices=(SCOPE_TARGET, SCOPE_SCAN),
+        default=None,
+        help="target=只处理 TARGET 下文档（默认）；scan=扫源清单（旧行为）",
+    )
 
-    src = p.add_argument_group("扫描范围（任选其一）")
+    src = p.add_argument_group("扫描范围（scope=scan 时）")
     src.add_argument("--folder", action="append", default=None, metavar="ID", help="清单 id")
     src.add_argument("--all-assigned", action="store_true", help="assignee==WORKER_ID")
     src.add_argument("--all-enabled", action="store_true", help="清单内全部 enabled")
@@ -128,6 +144,16 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--no-llm", action="store_true", help="文档类型仅用规则，不用 LLM")
     p.add_argument("--skip-read", action="store_true", help="不读正文（仅标题规则）")
     p.add_argument("--skip-author", action="store_true", help="不解析作者（更快）")
+    p.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="本地索引已有记录则跳过（不更新）；也可用 METADATA_BITABLE_SKIP_EXISTING=true",
+    )
+    p.add_argument(
+        "--no-skip-existing",
+        action="store_true",
+        help="强制覆盖更新（覆盖 .env 中 METADATA_BITABLE_SKIP_EXISTING）",
+    )
     return p.parse_args()
 
 
@@ -284,25 +310,65 @@ def _write_rows(
     index: MetadataRecordIndex,
     rows: List[DocMetadata],
     label: str,
+    skip_existing: bool = False,
+    ledger=None,
 ) -> Dict[str, int]:
-    created = updated = failed = 0
+    created = updated = skipped = failed = 0
     print(f"\n✍️ 写入 [{label}] {ref.title} …", flush=True)
     for i, meta in enumerate(rows, 1):
         try:
-            action, _rid = upsert_metadata_record(bitable, ref, index, meta)
+            if (
+                skip_existing
+                and ledger is not None
+                and ledger.is_done(
+                    meta.obj_token,
+                    OP_METADATA_BITABLE,
+                    node_token=meta.node_token,
+                )
+            ):
+                skipped += 1
+                continue
+            action, rid = upsert_metadata_record(
+                bitable, ref, index, meta, skip_existing=False
+            )
             if action == "created":
                 created += 1
-            else:
+            elif action == "updated":
                 updated += 1
+            elif action == "skipped":
+                skipped += 1
+            if ledger is not None and action in ("created", "updated", "skipped"):
+                ledger.mark(
+                    meta.obj_token,
+                    OP_METADATA_BITABLE,
+                    node_token=meta.node_token,
+                    status="done",
+                    result_ref=rid,
+                )
             if i % 20 == 0 or i == len(rows):
                 print(
-                    f"   [{label}] {i}/{len(rows)} | created={created} updated={updated}",
+                    f"   [{label}] {i}/{len(rows)} | "
+                    f"created={created} updated={updated} skipped={skipped}",
                     flush=True,
                 )
         except Exception as exc:
             failed += 1
+            if ledger is not None:
+                ledger.mark(
+                    meta.obj_token,
+                    OP_METADATA_BITABLE,
+                    node_token=meta.node_token,
+                    status="failed",
+                    detail=str(exc),
+                )
             print(f"❌ [{label}] 写入失败 {meta.title}: {exc}")
-    return {"created": created, "updated": updated, "failed": failed, "total": len(rows)}
+    return {
+        "created": created,
+        "updated": updated,
+        "skipped": skipped,
+        "failed": failed,
+        "total": len(rows),
+    }
 
 
 def main() -> int:
@@ -336,73 +402,107 @@ def main() -> int:
         print("❌ 需要 --parent-token 或 TARGET_PARENT_TOKEN（汇总表 / target 分表挂载）")
         return 1
 
-    folders = _resolve_folders(args)
+    scope = resolve_scope(args.scope)
+    skip_existing = resolve_skip_existing(
+        flag_skip=args.skip_existing,
+        flag_no_skip=args.no_skip_existing,
+        config_key="METADATA_BITABLE_SKIP_EXISTING",
+    )
+    agg_title = (
+        args.aggregated_title
+        or getattr(config, "METADATA_BITABLE_TITLE", None)
+        or "文档元数据汇总"
+    )
+    index_db = (
+        getattr(config, "METADATA_BITABLE_INDEX_DB", None) or "metadata_bitable_index.db"
+    )
+
+    # Force require_target when scope=target
+    if scope == SCOPE_TARGET and not parent_token:
+        print("❌ scope=target 需要 TARGET_PARENT_TOKEN")
+        return 1
+
     print("=" * 60)
-    print("文档元数据 → 飞书多维表格（独立工具）")
-    print(f"dry_run={args.dry_run} | mode={mode} | per_token_parent={per_parent}")
-    print(f"folders={len(folders)} | use_llm={use_llm}")
+    print("文档元数据 → 飞书多维表格（默认仅 TARGET）")
+    print(
+        f"scope={scope} | dry_run={args.dry_run} | mode={mode} | "
+        f"skip_existing={skip_existing} | use_llm={use_llm}"
+    )
     if parent_token:
         print(f"parent_token={parent_token}")
     print("=" * 60)
-    for f in folders:
-        print(f"  - {f.id}: {f.name} ({f.token})")
 
     tm = TokenManager(config.FEISHU_APP_ID, config.FEISHU_APP_SECRET)
-    scanner = SimpleWikiScanner(tm, enable_db_cache=False)
     reader = FeishuDocumentReader(tm)
     name_checker = FolderNameChecker(tm)
     creator = FeishuNodeCreator(tm, config.SPACE_ID)
     bitable = FeishuBitableClient(tm)
     wiki_meta = WikiMetaClient(tm)
 
-    # Collect docs per folder (preserve folder for per-token write)
+    folders: List[ScanFolder] = []
     docs_by_folder: Dict[str, List[Dict]] = defaultdict(list)
-    all_docs: List[Dict] = []
-    for folder in folders:
-        if args.max_documents > 0 and len(all_docs) >= args.max_documents:
-            break
-        remaining = (
-            args.max_documents - len(all_docs) if args.max_documents > 0 else 0
-        )
-        print(f"\n📂 扫描: {folder.name} ({folder.token})", flush=True)
-        docs = scanner.scan_space(
-            space_id=config.SPACE_ID,
-            root_token=folder.token,
-            use_cache=False,
-            max_documents=remaining if remaining > 0 else 0,
-        )
-        for d in docs:
-            d = dict(d)
-            d["source_folder_id"] = folder.id
-            d["source_folder_name"] = folder.name
-            d["source_folder_token"] = folder.token
-            docs_by_folder[folder.id].append(d)
-            all_docs.append(d)
-            if args.max_documents > 0 and len(all_docs) >= args.max_documents:
-                break
-        print(
-            f"   叶子文档(本夹扫描): {len(docs)} | 累计选取: {len(all_docs)}",
-            flush=True,
-        )
 
-    if args.max_documents > 0 and len(all_docs) > args.max_documents:
-        all_docs = all_docs[: args.max_documents]
-        # Rebuild per-folder slice consistently
-        docs_by_folder = defaultdict(list)
-        for d in all_docs:
-            docs_by_folder[d["source_folder_id"]].append(d)
-    if args.max_documents > 0:
-        print(f"⚠️ 限制处理 {len(all_docs)} 篇", flush=True)
+    if scope == SCOPE_TARGET:
+        unique_docs, label = load_tool_documents(
+            tm,
+            scope=SCOPE_TARGET,
+            max_documents=args.max_documents,
+            folders=None,
+        )
+        for d in unique_docs:
+            d.setdefault("source_folder_id", "target")
+            d.setdefault("source_folder_name", "TARGET")
+            docs_by_folder["target"].append(d)
+        print(f"📦 文档宇宙: {label} | 唯一叶子: {len(unique_docs)}")
+        # Synthetic folder for per-token mode under target
+        folders = [
+            ScanFolder(
+                id="target",
+                name="TARGET",
+                token=parent_token,
+                assignee="",
+                enabled=True,
+                priority=1,
+            )
+        ]
+    else:
+        folders = _resolve_folders(args)
+        for f in folders:
+            print(f"  - {f.id}: {f.name} ({f.token})")
+        unique_docs, label = load_tool_documents(
+            tm,
+            scope=SCOPE_SCAN,
+            max_documents=args.max_documents,
+            folders=folders,
+        )
+        for d in unique_docs:
+            docs_by_folder[d.get("source_folder_id") or "unknown"].append(d)
+        print(f"📦 文档宇宙: {label} | 唯一叶子: {len(unique_docs)}")
 
-    by_obj: Dict[str, Dict] = {}
-    for d in all_docs:
-        obj = d.get("obj_token") or d["node_token"]
-        by_obj.setdefault(obj, d)
-    unique_docs = list(by_obj.values())
-    print(f"\n待处理唯一文档: {len(unique_docs)}")
     if not unique_docs:
-        print("✅ 无文档")
+        print("✅ 无文档（TARGET 为空则请先分类复制）")
         return 0
+
+    index = MetadataRecordIndex(index_db)
+    ledger = open_tool_ledger()
+    if skip_existing:
+        before = len(unique_docs)
+        unique_docs = ledger.filter_pending(
+            unique_docs,
+            [OP_METADATA_BITABLE],
+            require_all_ops=True,
+        )
+        skipped_n = before - len(unique_docs)
+        if skipped_n:
+            print(f"⏭️ ledger 已写跳过: {skipped_n}，剩余 {len(unique_docs)}")
+        docs_by_folder = defaultdict(list)
+        for d in unique_docs:
+            docs_by_folder[d.get("source_folder_id") or "target"].append(d)
+        if not unique_docs:
+            print("✅ 全部已在 tool_ops 中，无需处理")
+            index.close()
+            ledger.close()
+            return 0
 
     read_map: Dict[str, Tuple[str, str]] = {}
     if args.skip_read:
@@ -456,7 +556,7 @@ def main() -> int:
             obj_token=obj,
             node_token=node,
             source_folder=doc.get("source_folder_name") or doc.get("source_folder_id") or "",
-            source_path=doc.get("source_path") or "",
+            source_path=doc.get("target_path") or doc.get("source_path") or "",
             author=author,
             doc_type=dtype,
         )
@@ -496,21 +596,14 @@ def main() -> int:
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
         print(f"📄 报告: {out_path}")
+        index.close()
+        ledger.close()
         return 0
 
-    index_db = (
-        getattr(config, "METADATA_BITABLE_INDEX_DB", None) or "metadata_bitable_index.db"
-    )
-    index = MetadataRecordIndex(index_db)
     total_failed = 0
 
     try:
         if mode in ("aggregated", "both"):
-            agg_title = (
-                args.aggregated_title
-                or getattr(config, "METADATA_BITABLE_TITLE", None)
-                or "文档元数据汇总"
-            )
             print(f"\n📁 确保汇总多维表格: {agg_title}")
             ref = ensure_metadata_bitable(
                 space_id=config.SPACE_ID,
@@ -529,6 +622,8 @@ def main() -> int:
                 index=index,
                 rows=rows_all,
                 label="aggregated",
+                skip_existing=skip_existing,
+                ledger=ledger,
             )
             total_failed += stats["failed"]
             report["bitables"].append(
@@ -594,6 +689,8 @@ def main() -> int:
                     index=index,
                     rows=folder_rows,
                     label=f"per-token:{folder.id}",
+                    skip_existing=skip_existing,
+                    ledger=ledger,
                 )
                 total_failed += stats["failed"]
                 report["bitables"].append(
@@ -614,6 +711,7 @@ def main() -> int:
                 )
     finally:
         index.close()
+        ledger.close()
 
     os.makedirs(config.LOG_DIR, exist_ok=True)
     out_path = os.path.join(config.LOG_DIR, "doc_metadata_bitable.json")

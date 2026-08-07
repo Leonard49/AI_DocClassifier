@@ -120,6 +120,33 @@ METADATA_BITABLE_PER_TOKEN_PARENT = (
     _env("METADATA_BITABLE_PER_TOKEN_PARENT") or "target"
 ).strip().lower()
 METADATA_USE_LLM_DOC_TYPE = _env_bool("METADATA_USE_LLM_DOC_TYPE", True)
+METADATA_BITABLE_SKIP_EXISTING = _env_bool("METADATA_BITABLE_SKIP_EXISTING", False)
+
+# Side tools: document universe + unified operation ledger
+# target = only docs under TARGET_PARENT_TOKEN; scan = source folders (legacy)
+TOOL_DOC_SCOPE = (_env("TOOL_DOC_SCOPE") or "target").strip().lower()
+TOOL_OPS_DB = _env("TOOL_OPS_DB") or "tool_ops.db"
+
+# Display titles → Feishu bitable (standalone; does NOT rename wiki titles)
+DISPLAY_TITLE_BITABLE_TITLE = _env("DISPLAY_TITLE_BITABLE_TITLE") or "文档展示标题"
+DISPLAY_TITLE_BITABLE_APP_TOKEN = _env("DISPLAY_TITLE_BITABLE_APP_TOKEN")
+DISPLAY_TITLE_BITABLE_INDEX_DB = (
+    _env("DISPLAY_TITLE_BITABLE_INDEX_DB") or "display_title_bitable_index.db"
+)
+DISPLAY_TITLE_BITABLE_PER_TOKEN_TITLE_TMPL = (
+    _env("DISPLAY_TITLE_BITABLE_PER_TOKEN_TITLE_TMPL") or "展示标题-{id}"
+)
+DISPLAY_TITLE_BITABLE_MODE = (
+    _env("DISPLAY_TITLE_BITABLE_MODE") or "aggregated"
+).strip().lower()
+DISPLAY_TITLE_BITABLE_PER_TOKEN_PARENT = (
+    _env("DISPLAY_TITLE_BITABLE_PER_TOKEN_PARENT") or "target"
+).strip().lower()
+DISPLAY_TITLE_USE_LLM_PURPOSE = _env_bool("DISPLAY_TITLE_USE_LLM_PURPOSE", True)
+DISPLAY_TITLE_SKIP_EXISTING = _env_bool("DISPLAY_TITLE_SKIP_EXISTING", False)
+
+# Enrichment backfill skip (per-op in TOOL_OPS_DB)
+ENRICHMENT_SKIP_EXISTING = _env_bool("ENRICHMENT_SKIP_EXISTING", False)
 
 
 def validate(

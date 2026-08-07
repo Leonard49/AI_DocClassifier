@@ -1,7 +1,7 @@
 # 分支变更记录
 
 > 记录各功能分支相对 `master` 的重要变化，便于选型与合并。  
-> **当前推荐落地分支：`feature/doc-enrichment`**（2026-07-31）
+> **当前推荐落地分支：`feature/tool-ops-target-scope`**（2026-08-07）
 
 ---
 
@@ -151,24 +151,21 @@
 
 ---
 
-## `feature/doc-enrichment`（文档增强管道）
+## `feature/tool-ops-target-scope`（工具只处理 TARGET + 统一操作账本）
 
-**基于：** `feature/console-ui`
+**基于：** `feature/doc-enrichment`
 
 **主要变化：**
 
 | 能力 | 说明 |
 |------|------|
-| 插件式 enrichment | 新包 `enrichment/`：步骤可扩展，不把逻辑堆进 `main.py` |
-| 复制后钩子 | `enrich_after_copy()`：贴元数据表 + 附件醒目分隔符（幂等） |
-| 旧副本回填 | `tools/enrich_copied_docs.py` 读 `shared_copy_state`，对已复制文档补齐增强 |
-| 附件分隔共享 | `enrichment/markers.py` 与 `attachment/extractor.py` 共用横幅块 |
-| 开关 | `ENABLE_METADATA_TABLE`；`ENABLE_ATTACHMENT_SEPARATOR`（默认 true） |
-| 控制台任务 | 「副本增强回填」/ dry-run |
+| 工具文档宇宙 | 默认只扫 `TARGET_PARENT_TOKEN`；未分类复制的源文档不进工具 |
+| 统一账本 | `tool_ops.db`（`OperationLedger`）：按 `(文档, op)` 独立记录 |
+| 操作互不影响 | `metadata_table` / `attachment_separator` / `metadata_bitable` / `display_title_bitable` |
+| 主流程不变 | `shared_copy_state` / `scan_snapshot` 仍只服务分类复制 |
+| 兼容 | `--scope scan` 可恢复扫源清单 |
 
-**扩展方式：** 新增 `EnrichmentStep` → 挂入 `default_steps()` → 新复制与回填自动生效。
-
-**关联文件：** `enrichment/`、`tools/enrich_copied_docs.py`、`main.py`（仅钩子）、`state/shared_state.py`（`list_copied`）
+**关联文件：** `state/operation_ledger.py`、`state/target_docs.py`、`tools/_tool_scope.py`、各 `tools/export_*` / `enrich_copied_docs`
 
 ---
 
@@ -176,42 +173,22 @@
 
 ```
 master
-  └── feature/multi-worker-parallel
-        └── feature/scan-snapshot-plan-b
-              └── feature/attachment-extract
-                    └── feature/classify-quality-restructure
-                          └── feature/scan-folders-batch
-                                ├── feature/doc-metadata-bitable
-                                └── feature/doc-metadata-inline-table
-                                      └── feature/console-ui
-                                            └── feature/doc-enrichment  ← 当前推荐
+  └── … → feature/console-ui
+              └── feature/doc-enrichment
+                    └── feature/tool-ops-target-scope  ← 当前推荐（工具架构）
 ```
 
 ## 选用建议
 
 | 场景 | 推荐分支 |
 |------|----------|
-| 单人、小目录、快速试用 | `feature/multi-worker-parallel` |
-| 大目录增量跑、排除周报日报 | `feature/scan-snapshot-plan-b` |
-| 仅需附件提取 + 跨进程限速 | `feature/attachment-extract` |
-| 分类质量 + 分卷 + 包结构 | `feature/classify-quality-restructure` |
-| 生产落地（清单批量增量） | `feature/scan-folders-batch` |
-| 元数据写入多维表格（独立工具） | `feature/doc-metadata-bitable` |
-| 元数据贴到目标文档开头（随 main） | `feature/doc-metadata-inline-table` |
-| 图形化配置 + 跑分类/元数据 | `feature/console-ui` |
-| **生产推荐（含旧副本回填 / 可扩展增强）** | **`feature/doc-enrichment`** |
+| **生产推荐（TARGET 工具 + 操作账本）** | **`feature/tool-ops-target-scope`** |
+| 图形化配置 + enrichment（上一版） | `feature/doc-enrichment` |
 
 ## 切换与更新
 
 ```powershell
 git fetch origin
-git checkout feature/doc-enrichment
-git pull origin feature/doc-enrichment
-copy .env.example .env
-pip install -r requirements.txt
-# 双击 启动控制台.bat  或:
-python run_console.py
-# 旧副本补元数据表 / 附件分隔:
-python -m tools.enrich_copied_docs --dry-run --limit 20
-python -m tools.enrich_copied_docs
+git checkout feature/tool-ops-target-scope
+git pull origin feature/tool-ops-target-scope
 ```

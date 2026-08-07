@@ -339,14 +339,19 @@ def upsert_metadata_record(
     ref: MetadataBitableRef,
     index: MetadataRecordIndex,
     meta: DocMetadata,
+    *,
+    skip_existing: bool = False,
 ) -> Tuple[str, str]:
     """
-    Returns (action, record_id) where action is 'created' or 'updated'.
+    Returns (action, record_id) where action is 'created', 'updated', or 'skipped'.
     """
-    fields = metadata_to_fields(meta)
     existing = index.get(
         meta.obj_token, app_token=ref.app_token, table_id=ref.table_id
     )
+    if existing and skip_existing:
+        return "skipped", existing
+
+    fields = metadata_to_fields(meta)
     if existing:
         try:
             bitable.update_record(ref.app_token, ref.table_id, existing, fields)
@@ -374,11 +379,57 @@ def upsert_metadata_record(
     return "created", record_id
 
 
+def find_metadata_bitable(
+    *,
+    space_id: str,
+    target_parent_token: str,
+    title: str,
+    name_checker: FolderNameChecker,
+    bitable: FeishuBitableClient,
+    wiki_meta: WikiMetaClient,
+    app_token_override: Optional[str] = None,
+) -> Optional[MetadataBitableRef]:
+    """Return existing metadata bitable ref, or None (does not create)."""
+    app_token = (app_token_override or "").strip()
+    node_token = ""
+    if not app_token:
+        children = name_checker.list_children(space_id, target_parent_token)
+        if title not in children:
+            return None
+        node_token = children[title]
+        node = wiki_meta.get_node(node_token)
+        if node.get("obj_type") != "bitable":
+            return None
+        app_token = node.get("obj_token") or ""
+        if not app_token:
+            return None
+    else:
+        children = name_checker.list_children(space_id, target_parent_token)
+        if title in children:
+            node_token = children[title]
+
+    tables = bitable.list_tables(app_token)
+    table_id = None
+    for t in tables:
+        if (t.get("name") or "") == TABLE_NAME:
+            table_id = t.get("table_id")
+            break
+    if not table_id:
+        return None
+    return MetadataBitableRef(
+        node_token=node_token,
+        app_token=app_token,
+        table_id=table_id,
+        title=title,
+    )
+
+
 __all__ = [
     "TABLE_NAME",
     "MetadataBitableRef",
     "MetadataRecordIndex",
     "ensure_metadata_bitable",
+    "find_metadata_bitable",
     "upsert_metadata_record",
     "metadata_to_fields",
 ]
