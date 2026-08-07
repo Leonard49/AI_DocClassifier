@@ -691,16 +691,18 @@ git pull origin feature/doc-enrichment
 
 ### A.1 系统总览（阶段串联）
 
+> **Core** = 阶段 0–6（`main.py`）。**Tools** = 阶段 T（独立进程，默认读 TARGET，不扫源）。
+
 ```mermaid
 flowchart TB
-    subgraph P0["阶段 0 启动"]
+    subgraph P0["阶段 0 启动 Core"]
         A0([main.py]) --> A1{config.validate}
         A1 -->|失败| A1E[退出]
         A1 -->|通过| A2[TokenManager 与组件初始化]
         A2 --> A3{ENABLE_SHARED_DEDUP}
         A3 -->|是| A4[SharedCopyState]
         A3 -->|否| A5
-        A4 --> A5[解析 SCAN_ROOT 与 TARGET_PARENT]
+        A4 --> A5[解析 SCAN 与 TARGET]
     end
 
     subgraph P1["阶段 1 基线"]
@@ -708,7 +710,7 @@ flowchart TB
     end
 
     subgraph P2["阶段 2 扫描源"]
-        C1[BFS 扫描源目录] --> C2[all_documents 列表]
+        C1[BFS 扫描源目录] --> C2[all_documents]
     end
 
     subgraph P3["阶段 3 过滤"]
@@ -721,11 +723,19 @@ flowchart TB
     end
 
     subgraph P5["阶段 5 写回"]
-        F1[串行 claim 复制 mark_copied] --> F2[可选打标 保存 progress]
+        F1[串行 claim 复制 mark_copied] --> F1B[enrichment 钩子]
+        F1B --> F2[可选源文档打标 保存 progress]
     end
 
     subgraph P6["阶段 6 验证"]
         G1[扫描目标目录] --> G2[target_count_after 统计]
+    end
+
+    subgraph PT["阶段 T 侧工具 另启进程"]
+        T0[列举 TARGET 叶子] --> T1[tool_ops 按 op skip]
+        T1 --> T2[元数据表 / 归纳新标题 / 回填等]
+        T2 --> T3[写飞书 bitable 或改副本正文]
+        T3 --> T4[mark tool_ops.db]
     end
 
     A5 --> B1
@@ -734,7 +744,10 @@ flowchart TB
     D2 --> D2A
     E2 --> F1
     F2 --> G1
+    G2 -.->|TARGET 已有副本| T0
 ```
+
+协作要点：Core **生产** TARGET 副本；Tools **消费** TARGET（默认），**不**依赖 `scan_folders` 的 assignee。详见 [A.12](#a12-core-与-tools-协作关系) 与 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
 ---
 
@@ -911,7 +924,7 @@ flowchart TD
 
 ---
 
-### A.8 阶段 5：串行复制与打标
+### A.8 阶段 5：串行复制、enrichment 与打标
 
 ```mermaid
 flowchart TD
@@ -930,21 +943,24 @@ flowchart TD
     P7 --> P8[resolve_unique_title]
     P8 --> P9[wiki copy API]
     P9 --> P10{复制成功}
-    P10 -->|是| P11{ENABLE_TAG_ADD}
-    P11 -->|是| P12[add_tag_block]
-    P11 -->|否| P13
-    P12 --> P13[mark_copied]
+    P10 -->|是| P11[mark_copied]
+    P11 --> P12[enrichment 钩子]
+    P12 --> P13{ENABLE_TAG_ADD}
+    P13 -->|是| P14[add_tag_block 源文档]
+    P13 -->|否| P15
+    P14 --> P15[save progress]
     P10 -->|否| P10F[release_claim]
-    P13 --> P14[save progress]
-    P10F --> P15
-    P2F --> P15
-    P1S --> P15
-    P3S --> P15
-    P4S --> P15
-    P14 --> P15{还有下一篇}
-    P15 -->|是| P0
-    P15 -->|否| P19([进入阶段 6])
+    P10F --> P16
+    P2F --> P16
+    P1S --> P16
+    P3S --> P16
+    P4S --> P16
+    P15 --> P16{还有下一篇}
+    P16 -->|是| P0
+    P16 -->|否| P19([进入阶段 6])
 ```
+
+说明：enrichment 钩子只作用于**刚复制的目标文档**；旧副本需另跑 Tools「副本增强回填」。
 
 ---
 
@@ -1017,15 +1033,24 @@ flowchart LR
         TAGS["classify_results"]
     end
 
-    subgraph LOCAL["本机持久化"]
+    subgraph COREDATA["data/core 主流程"]
         PP["processing_progress.json"]
         CC["classify_cache.db"]
         WC["wiki_scan_cache.db"]
-        LOG["logs/"]
+        SNAP["scan_snapshot.db"]
     end
 
-    subgraph SHARED["共享持久化"]
-        SS["shared_copy_state.db"]
+    subgraph TOOLDATA["data/tools 侧工具"]
+        OPS["tool_ops.db"]
+    end
+
+    subgraph SHARED["共享盘 UNC"]
+        SS["SHARED_STATE_DB"]
+        RL["FEISHU_RATE_LIMIT_DB"]
+    end
+
+    subgraph LOGS["logs/"]
+        LOG["各类报告 json"]
     end
 
     ENV --> DOCS
@@ -1041,8 +1066,78 @@ flowchart LR
     TAGS --> PP
     TAGS --> SS
     TAGS --> LOG
+    SNAP -.-> DOCS
+    FEISHU --> OPS
+    OPS --> LOG
 ```
 
 ---
 
-*文档对应仓库：AI_DocClassifier · 分支 feature/doc-enrichment · 更新 2026-07-31*
+### A.12 Core 与 Tools 协作关系
+
+#### 数据流（谁生产、谁消费）
+
+```mermaid
+flowchart LR
+    SRC["源目录 SCAN / scan_folders"]
+    MAIN["main.py Core"]
+    TGT["TARGET 分类副本"]
+    TOOLS["tools.* 侧工具"]
+    BIT["飞书多维表格"]
+    LEDGER["tool_ops.db"]
+
+    SRC -->|扫描分类复制| MAIN
+    MAIN -->|写入副本 + 可选 enrichment| TGT
+    MAIN -->|claim / copied| SS2["SHARED_STATE_DB"]
+    TGT -->|默认 scope=target 列举叶子| TOOLS
+    TOOLS -->|upsert 元数据 / 归纳新标题| BIT
+    TOOLS -->|回填贴表分隔等| TGT
+    TOOLS -->|按 op 记 done + result_ref| LEDGER
+```
+
+#### 推荐跑法（与一人扫完全部 SCAN 再跑工具一致）
+
+```mermaid
+sequenceDiagram
+    participant W as Worker
+    participant Core as main.py
+    participant Share as SHARED_STATE_DB
+    participant Target as TARGET
+    participant Tool as tools.*
+    participant Ops as tool_ops.db
+
+    W->>Core: 分类复制 --all-assigned / --all-enabled
+    loop 每篇源文档
+        Core->>Share: try_claim / mark_copied
+        Core->>Target: wiki copy + enrichment 钩子
+    end
+    W->>Tool: 元数据表 / 归纳新标题 / 回填
+    Tool->>Target: 列举叶子 docx
+    loop 每篇 TARGET 文档
+        Tool->>Ops: is_done(op)?
+        alt 未完成
+            Tool->>Target: 读正文 / 写副本或写 bitable
+            Tool->>Ops: mark(op, result_ref)
+        else 已完成且 skip_existing
+            Tool-->>Tool: 跳过该 op
+        end
+    end
+```
+
+#### 逻辑约定（务必遵守）
+
+| 点 | 说明 |
+|----|------|
+| 边界 | Core 只负责「源 → TARGET」；Tools 默认只碰 TARGET，**未复制的源文档不进工具** |
+| 状态分离 | Core 用 `data/core/*` + `SHARED_STATE_DB`；Tools 用 **`data/tools/tool_ops.db`**，互不替代 |
+| op 独立 | `metadata_table` / `attachment_separator` / `metadata_bitable` / `display_title_bitable` 互不影响 |
+| 归纳新标题 | 只写 bitable + Wiki 链接，**不改 wiki 原标题** |
+| 复制后钩子 | `main` 里 enrichment 只覆盖**本次新复制**；历史副本用 `enrich_copied_docs` |
+| 可选扫源 | 工具加 `--scope scan` 才扫清单（旧行为，多人并行元数据分表时偶用） |
+| 扩展 | 新工具：`OP_*` + `ToolJob` + 控制台挂项；禁止再新建 `*_index.db` |
+
+更完整的文字说明见 **[ARCHITECTURE.md](ARCHITECTURE.md)**。
+
+---
+
+*文档对应仓库：AI_DocClassifier · 分支 feature/arch-data-dir-cleanup · 更新 2026-08-07*
