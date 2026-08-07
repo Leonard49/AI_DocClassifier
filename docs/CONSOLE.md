@@ -1,11 +1,12 @@
 # AI DocClassifier — 本地 Web 控制台使用说明
 
-> 分支：`feature/doc-enrichment`  
-> 更新日期：2026-07-31  
+> 分支：`feature/arch-data-dir-cleanup`  
+> 更新日期：2026-08-07  
 > 地址：http://127.0.0.1:8787（仅本机）  
-> 启动：双击 `启动控制台.bat`，或 `python run_console.py`
+> 启动：双击 `启动控制台.bat`，或 `python run_console.py`  
+> 架构（主流程 vs 侧工具）：[ARCHITECTURE.md](ARCHITECTURE.md)
 
-控制台用于：**改配置、改清单分工、一键跑分类/元数据/副本增强回填并看实时日志**。不替代飞书权限与 `.env` 必填项。
+控制台用于：**改配置、改清单分工、一键跑分类 / 元数据表 / 归纳新标题 / 副本增强回填并看实时日志**。不替代飞书权限与 `.env` 必填项。
 
 ---
 
@@ -14,8 +15,8 @@
 ```powershell
 git clone https://github.com/Leonard49/AI_DocClassifier.git
 cd AI_DocClassifier
-git checkout feature/doc-enrichment
-git pull origin feature/doc-enrichment
+git checkout feature/arch-data-dir-cleanup
+git pull origin feature/arch-data-dir-cleanup
 
 python -m venv .venv
 .venv\Scripts\activate
@@ -52,7 +53,7 @@ notepad .env
 
 ## 2. 日常启动
 
-1. `git pull origin feature/doc-enrichment`
+1. `git pull origin feature/arch-data-dir-cleanup`
 2. 双击项目根目录 **`启动控制台.bat`**  
    - 或：`.venv\Scripts\activate` 后执行 `python run_console.py`
 3. 浏览器应自动打开 http://127.0.0.1:8787  
@@ -80,12 +81,10 @@ notepad .env
 | 分类 | 分类复制（我的文件夹） | `main.py --all-assigned` |
 | 分类 | 分类复制（清单全部 enabled） | 慎用，会跑所有 enabled |
 | 分类 | 分类复制（指定 folder id） | 先在下方下拉框选 id |
-| 元数据 | 元数据 → 按 token 分表 | **三人并行推荐** |
-| 元数据 | 元数据 → 汇总+分表 (both) | 自己名下；可能与同事抢写汇总表 |
-| 元数据 | 元数据 → 仅汇总表（全清单） | **建议全部人分表跑完后，由一人执行** |
-| 元数据 | 元数据试跑（20 篇 dry-run） | 不写表，先看提取结果 |
-| 元数据 | **展示标题试跑 / 汇总多维表格** | 默认只处理 **TARGET** 下文档；生成「日期-型号或路径-作用」+ Wiki 链接（**不改原标题**） |
-| 元数据 | 元数据分表（指定 folder id） | 单夹验证（`--scope scan`） |
+| 元数据表 | 元数据 → 按 token 分表 | **三人并行推荐**（扫源） |
+| 元数据表 | 元数据 → 汇总+分表 / 仅汇总（TARGET） | 写文档元数据多维表格 |
+| 元数据表 | 元数据试跑（20 篇 dry-run） | 不写表，先看提取结果 |
+| **归纳新标题** | **归纳新标题 → 多维表格 / 试跑** | 默认只处理 **TARGET**；生成「日期-型号或路径-作用」+ Wiki 链接（**不改 wiki 原标题**） |
 | 工具 | Others 纠偏 / 主题归档 / 附件重试 / **副本增强回填（TARGET）** | 运维专项；增强默认扫 TARGET |
 
 操作要点：

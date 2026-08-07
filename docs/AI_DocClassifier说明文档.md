@@ -1,9 +1,9 @@
 # AI DocClassifier 系统说明文档
 
 > 飞书知识库文档自动分类系统  
-> 版本：`feature/doc-enrichment` 分支（含控制台、元数据贴表/多维表格、文档增强回填）  
-> 更新日期：2026-07-31  
-> 操作手册：[QUICK_START.md](QUICK_START.md) · 控制台：[CONSOLE.md](CONSOLE.md) · 分支：[BRANCHES.md](BRANCHES.md)
+> 版本：`feature/arch-data-dir-cleanup`（DATA_DIR + 统一工具账本 + TARGET 侧工具）  
+> 更新日期：2026-08-07  
+> 操作手册：[QUICK_START.md](QUICK_START.md) · 控制台：[CONSOLE.md](CONSOLE.md) · 分支：[BRANCHES.md](BRANCHES.md) · **架构（Core vs Tools）**：[ARCHITECTURE.md](ARCHITECTURE.md)
 
 ---
 
@@ -29,82 +29,91 @@
 
 ### 1.1 做什么
 
-本系统自动整理飞书知识库文档：
+本系统自动整理飞书知识库文档，分成两条线：
 
-1. 按 **`scan_folders.json` 清单**（或单个 `SCAN_ROOT_TOKEN`）BFS 扫描**叶子 docx**（`has_child=false`）
-2. 可选：将文档内 **PDF/Word/PPT 附件**提取为文本写回源文档（`ENABLE_ATTACHMENT_EXTRACT`）
-3. 读取正文，调用 **LLM**（经 OpenAI 兼容网关，默认 `deepseek-v4-flash`）按预定义标签树分类
+**Core（主流程，`main.py`）**
+
+1. 按 **`scan_folders.json` 清单**（或单个 `SCAN_ROOT_TOKEN`）BFS 扫描**叶子 docx**
+2. 可选：将文档内 **PDF/Word/PPT 附件**提取为文本写回源文档
+3. 读取正文，调用 **LLM** 按标签树分类
 4. 在**目标目录**（`TARGET_PARENT_TOKEN`）下按分类创建文件夹并**复制**文档
-5. 复制成功后跑 **enrichment 管道**（贴元数据表 / 附件醒目分隔符等，均可幂等开关）
+5. 复制成功后跑 **enrichment**（贴元数据表 / 附件分隔符等）
 6. 可选：在**原文档**插入分类标签块（`ENABLE_TAG_ADD`）
-7. 可选：独立工具将元数据写入飞书**多维表格**；或对已复制文档 **回填增强**（`tools.enrich_copied_docs`）
+
+**Tools（侧工具，`python -m tools.*` / 控制台）**
+
+7. 对 **TARGET 下已复制文档**做旁路能力：文档元数据 → 多维表格、**归纳新标题 → 多维表格**（不改 wiki 原标题）、旧副本增强回填、Others 纠偏等  
 8. 可用**本地 Web 控制台**配置参数、改清单分工、一键跑任务看日志
+
+主流程与侧工具的边界、状态库、扩展约定见 **[ARCHITECTURE.md](ARCHITECTURE.md)**。
 
 ### 1.2 架构特点
 
 ```
-扫描（单线程 BFS，支持清单多文件夹）
-  → [可选] 附件提取写回源文档（PDF/Word/PPT）
-  → 并行读取正文（READ_WORKERS，飞书限速）
-  → 并行 AI 分类（CLASSIFY_WORKERS，LLM 全局并发≤2）
-  → 串行复制 + enrichment 管道（贴表 / 附件分隔）+ [可选]源文档打标
+【Core】
+扫描（清单 / SCAN_ROOT）
+  → [可选] 附件提取写回源文档
+  → 并行读取正文 → 并行 AI 分类
+  → 串行复制 + enrichment 钩子 + [可选]源文档打标
   → 扫描目标目录验证数量
+  状态：data/core/* + SHARED_STATE_DB（共享盘）
 
-旁路：tools.export_doc_metadata_bitable → 多维表格
-旁路：tools.enrich_copied_docs → 旧副本增强回填
+【Tools】默认只处理 TARGET 叶子（未复制源文档不进工具）
+  enrich_copied_docs          → 回填贴表 / 附件分隔
+  export_doc_metadata_bitable → 文档元数据多维表格
+  export_display_title_bitable→ 归纳新标题多维表格（不改原标题）
+  状态：唯一账本 data/tools/tool_ops.db（按 op 独立 skip）
+
 入口：main.py / run_console.py（http://127.0.0.1:8787）
 ```
 
-### 1.3 分支说明
+### 1.3 分支说明与优化记录
 
-详见 [docs/BRANCHES.md](BRANCHES.md)。
+- **选型与每分支变更表**：[docs/BRANCHES.md](BRANCHES.md)  
+- **本轮架构优化（data/ + 账本收敛 + ToolJob）**：见 BRANCHES 中 `feature/arch-data-dir-cleanup`，摘要见 [ARCHITECTURE.md §2](ARCHITECTURE.md#2-本轮优化记录featurearch-data-dir-cleanup)
 
 | 分支 | 说明 |
 |------|------|
 | `master` | 早期单机版本 |
-| `feature/multi-worker-parallel` | 多人并行、共享去重、目标目录验证统计 |
-| `feature/scan-snapshot-plan-b` | 扫描快照增量、排除类规则、分类失败清单 |
+| `feature/multi-worker-parallel` | 多人并行、共享去重 |
+| `feature/scan-snapshot-plan-b` | 扫描快照增量、排除类规则 |
 | `feature/attachment-extract` | 附件提取合入主流程 |
-| `feature/classify-quality-restructure` | 包结构重组 + 分类质量/分卷/Others 纠偏 |
-| `feature/scan-folders-batch` | 源文件夹清单批量增量 + Others 主题归档 |
+| `feature/classify-quality-restructure` | 包结构重组 + 分类质量/分卷 |
+| `feature/scan-folders-batch` | 源文件夹清单批量增量 |
 | `feature/doc-metadata-bitable` | 元数据 → 多维表格（独立工具） |
-| `feature/doc-metadata-inline-table` | 元数据贴目标文档开头（随 main） |
-| `feature/console-ui` | 本地 Web 控制台 + 分类/元数据任务 |
-| **`feature/doc-enrichment`** | **可扩展 enrichment + 旧副本回填（当前推荐）** |
+| `feature/doc-metadata-inline-table` | 元数据贴目标文档开头 |
+| `feature/console-ui` | 本地 Web 控制台 |
+| `feature/doc-enrichment` | enrichment 插件 + 旧副本回填 |
+| `feature/tool-ops-target-scope` | 工具默认 TARGET + `tool_ops` 账本 |
+| **`feature/arch-data-dir-cleanup`** | **DATA_DIR + 账本收敛 + ToolJob（当前推荐）** |
 
 ---
 ## 二、项目结构
 
-详见 [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)。
+详见 [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) 与 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
 | 模块 | 路径 | 职责 |
 |------|------|------|
-| 入口 | `main.py` | 流程编排、并行调度、进度与统计 |
+| 入口 | `main.py` | **Core** 流程编排、并行调度、进度与统计 |
 | **控制台** | **`console/` / `run_console.py`** | 本地 Web：配置、清单、跑任务与日志 |
-| 配置 | `config.py` | 从 `.env` 加载环境变量 |
+| 配置 / 路径 | `config.py`、`util/paths.py` | `.env`、`DATA_DIR`、旧库迁移 |
 | Token | `feishu/token_manager.py` | 飞书 `tenant_access_token` 自动刷新 |
 | 扫描 | `feishu/wiki_scanner.py` | BFS 遍历 wiki，仅收集叶子 docx |
 | 读文档 | `feishu/read_doc.py` | 调用 docx API 获取正文 |
 | **附件提取** | **`attachment/extractor.py`** | PDF/Word/PPT 附件转文本写回源文档 |
-| 附件格式 | `attachment/extractors/` | PDF / Word / PPT 提取器实现 |
 | 分类 | `classify/llm_tree_classifier.py` | 标签树 + LLM 分类 |
 | 元数据提取 | `classify/doc_metadata.py` | 产品线(tag1)/型号/文档类型等 |
-| 分类缓存 | `classify/classify_cache.py` | SQLite 缓存分类结果 |
-| **共享去重** | **`state/shared_state.py`** | 跨 worker 的 `obj_token` 复制注册表 |
+| 展示标题 | `classify/display_title.py` | 归纳「日期-型号或路径-作用」（不改 wiki） |
+| 分类缓存 | `classify/classify_cache.py` | SQLite → `data/core/classify_cache.db` |
+| **共享去重** | **`state/shared_state.py`** | Core：跨 worker `obj_token` 复制注册表 |
+| **工具账本** | **`state/operation_ledger.py`** | Tools：按 `(文档, op)` 的 skip / `result_ref` |
+| TARGET 列举 | `state/target_docs.py` | 列出目标目录叶子文档 |
 | 清单 | `state/scan_folders.py` | `scan_folders.json` 加载与分工过滤 |
 | 分卷 | `state/folder_rollover.py` | 单层节点超限自动分卷 |
-| 多维表格状态 | `state/metadata_bitable.py` | 确保 bitable + 幂等 upsert 索引 |
-| 文件夹 | `feishu/create_feishu_node.py` / `feishu/title_check.py` | 创建/查找节点（含 bitable） |
-| 复制 | `feishu/copy_doc.py` | wiki copy API |
-| 移动 | `feishu/wiki_move.py` | wiki move API（Others 纠偏） |
-| 打标 | `feishu/add_tag_block.py` | 原文档插入标签块 |
-| 贴元数据表 | `feishu/metadata_table.py` | 目标 Docx 开头插入元数据表格 |
-| **文档增强** | **`enrichment/`** | 复制后/回填插件管道（贴表、附件分隔、可扩展） |
-| 多维表格 API | `feishu/bitable.py` | bitable 建表/写记录 |
-| 作者解析 | `feishu/wiki_meta.py` | wiki 节点 owner → 显示名 |
-| 飞书限速 | `feishu/http.py` | 跨进程 + 本进程限速、自动重试 |
-| LLM 限速 | `classify/llm_rate_limit.py` | LLM 并发≤2 |
-| 运维脚本 | `tools/` | 附件重试、Others 纠偏、元数据导出、副本增强回填 |
+| 多维表格 | `state/metadata_bitable.py` / `display_title_bitable.py` | 确保 bitable；record_id 写入 ledger |
+| **文档增强** | **`enrichment/`** | 复制后/回填插件管道 |
+| **ToolJob** | **`tools/runner.py`** | 侧工具共用：scope / skip / 报告 |
+| 工具脚本 | `tools/` | 元数据导出、归纳新标题、回填、Others、附件重试 |
 | 日志 | `util/run_logging.py` | 终端输出写入 `logs/` |
 
 ---

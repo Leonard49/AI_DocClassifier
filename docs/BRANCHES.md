@@ -1,7 +1,8 @@
 # 分支变更记录
 
 > 记录各功能分支相对 `master` 的重要变化，便于选型与合并。  
-> **当前推荐落地分支：`feature/tool-ops-target-scope`**（2026-08-07）
+> **当前推荐落地分支：`feature/arch-data-dir-cleanup`**（2026-08-07）  
+> **架构边界（Core vs Tools）与本轮优化摘要**：[ARCHITECTURE.md](ARCHITECTURE.md)
 
 ---
 

@@ -114,9 +114,9 @@ JOB_CATALOG: List[JobSpec] = [
     ),
     JobSpec(
         "display_title_agg",
-        "展示标题 → 汇总多维表格（TARGET）",
-        "metadata",
-        "export_display_title_bitable --scope target",
+        "归纳新标题 → 多维表格（TARGET，不改 wiki）",
+        "titles",
+        "export_display_title_bitable --scope target（日期-型号或路径-作用）",
         [
             sys.executable,
             "-m",
@@ -127,8 +127,8 @@ JOB_CATALOG: List[JobSpec] = [
     ),
     JobSpec(
         "display_title_dry",
-        "展示标题试跑（TARGET 20 篇 dry-run）",
-        "metadata",
+        "归纳新标题试跑（TARGET 20 篇 dry-run）",
+        "titles",
         "display_title dry-run --max-documents 20",
         [
             sys.executable,

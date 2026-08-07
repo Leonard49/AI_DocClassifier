@@ -1,16 +1,16 @@
 # AI DocClassifier — 快速上手指南
 
 > 面向批量落地 · 多人并行 / 一人清单增量操作手册  
-> **当前推荐分支：`feature/doc-enrichment`**（控制台 + 分类 + 文档增强/回填）  
-> 控制台说明：[CONSOLE.md](CONSOLE.md)
+> **当前推荐分支：`feature/arch-data-dir-cleanup`**（控制台 + TARGET 侧工具 + `data/` 布局）  
+> 控制台：[CONSOLE.md](CONSOLE.md) · 架构：[ARCHITECTURE.md](ARCHITECTURE.md) · 分支：[BRANCHES.md](BRANCHES.md)
 
 ---
 
 ## 零、本地 Web 控制台（推荐）
 
 ```powershell
-git checkout feature/doc-enrichment
-git pull origin feature/doc-enrichment
+git checkout feature/arch-data-dir-cleanup
+git pull origin feature/arch-data-dir-cleanup
 pip install -r requirements.txt
 # 双击 启动控制台.bat
 # 或: python run_console.py
@@ -20,9 +20,9 @@ pip install -r requirements.txt
 
 - **配置**：编辑 `.env`（飞书 / LLM / 并行 / 元数据开关）
 - **清单分工**：改 `scan_folders.json` 的 assignee / enabled
-- **运行**：一键跑分类复制、元数据多维表格、**副本增强回填**等，右侧看实时日志
+- **运行**：分类复制、**元数据表**、**归纳新标题**、副本增强回填等，右侧看实时日志
 
-完整说明见 **[控制台使用说明](CONSOLE.md)**。
+完整说明见 **[控制台使用说明](CONSOLE.md)**。主程序与侧工具边界见 **[ARCHITECTURE.md](ARCHITECTURE.md)**。
 
 ---
 
