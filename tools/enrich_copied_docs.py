@@ -36,15 +36,7 @@ from state.operation_ledger import (
     OP_METADATA_TABLE,
     OperationLedger,
 )
-from tools._tool_scope import (
-    SCOPE_SCAN,
-    SCOPE_TARGET,
-    load_tool_documents,
-    open_tool_ledger,
-    resolve_scan_folders_from_args,
-    resolve_scope,
-    resolve_skip_existing,
-)
+from tools.runner import ToolJob, add_scope_args, ensure_utf8_stdio
 
 
 def _parse_args() -> argparse.Namespace:
@@ -53,24 +45,10 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--limit", type=int, default=0, help="最多处理条数（0=不限）")
-    p.add_argument(
-        "--scope",
-        choices=(SCOPE_TARGET, SCOPE_SCAN),
-        default=None,
-        help="target=只处理 TARGET（默认）；scan=扫源清单（旧行为）",
-    )
     p.add_argument("--steps", default="", help="metadata_table,attachment_separator")
     p.add_argument("--skip-read-content", action="store_true")
     p.add_argument("--no-author", action="store_true")
-    p.add_argument("--skip-existing", action="store_true")
-    p.add_argument("--no-skip-existing", action="store_true")
-    # scan-scope only
-    p.add_argument("--folder", action="append", default=None)
-    p.add_argument("--all-assigned", action="store_true")
-    p.add_argument("--all-enabled", action="store_true")
-    p.add_argument("--folders-file", default=None)
-    p.add_argument("--scan-token", default=None)
-    p.add_argument("--scan-name", default=None)
+    add_scope_args(p)
     return p.parse_args()
 
 
@@ -105,7 +83,6 @@ def _build_pipeline(
         enable_meta = OP_METADATA_TABLE in selected
         enable_sep = OP_ATTACHMENT_SEPARATOR in selected
 
-    # Wrap steps: after apply, mark ledger; if skip_existing and ledger done, short-circuit
     class _LedgerStep:
         def __init__(self, inner, op: str):
             self.inner = inner
@@ -154,59 +131,30 @@ def _build_pipeline(
 
 
 def main() -> int:
-    if sys.platform == "win32":
-        for stream in (sys.stdout, sys.stderr):
-            try:
-                stream.reconfigure(encoding="utf-8")
-            except Exception:
-                pass
-
+    ensure_utf8_stdio()
     args = _parse_args()
+    selected = _selected_steps(args.steps)
+    planned = _planned_ops(selected)
+
+    job = ToolJob(
+        title="文档增强回填（默认仅 TARGET）",
+        ops=planned,
+        skip_config_key="ENRICHMENT_SKIP_EXISTING",
+        require_llm=False,
+        require_target=True,
+        require_scan_source=False,
+        max_documents_attr="limit",
+    )
     try:
-        config.validate(require_scan_source=False, require_llm=False, require_target=True)
+        ctx = job.open(args, banner_extra=f"ops={planned}")
     except ValueError as exc:
         print(f"❌ {exc}")
         return 1
+    except SystemExit:
+        raise
 
-    scope = resolve_scope(args.scope)
-    skip_existing = resolve_skip_existing(
-        flag_skip=args.skip_existing,
-        flag_no_skip=args.no_skip_existing,
-        config_key="ENRICHMENT_SKIP_EXISTING",
-    )
-    selected = _selected_steps(args.steps)
-    planned = _planned_ops(selected)
-    limit = args.limit if args.limit and args.limit > 0 else 0
-
-    tm = TokenManager(config.FEISHU_APP_ID, config.FEISHU_APP_SECRET)
-    folders = None
-    if scope == SCOPE_SCAN:
-        folders = resolve_scan_folders_from_args(args)
-
-    print("=" * 60)
-    print("文档增强回填（默认仅 TARGET）")
-    print(f"scope={scope} | skip_existing={skip_existing} | ops={planned}")
-    print("=" * 60)
-
-    docs, label = load_tool_documents(
-        tm, scope=scope, max_documents=limit, folders=folders
-    )
-    print(f"📦 文档宇宙: {label} | 唯一叶子: {len(docs)}")
-
-    ledger = open_tool_ledger()
     try:
-        if skip_existing and planned:
-            before = len(docs)
-            docs = ledger.filter_pending(
-                docs,
-                planned,
-                entity_key_field="obj_token",
-                node_token_field="node_token",
-                require_all_ops=True,
-            )
-            skipped_n = before - len(docs)
-            if skipped_n:
-                print(f"⏭️ ledger 已完成全部计划步骤，跳过: {skipped_n}，剩余 {len(docs)}")
+        docs = ctx.docs
         if not docs:
             print("✅ 无需处理")
             return 0
@@ -215,7 +163,8 @@ def main() -> int:
             for i, d in enumerate(docs[:50], 1):
                 print(
                     f"  {i}. {d.get('title') or ''} | "
-                    f"node={d.get('node_token')} | path={d.get('target_path') or d.get('source_path') or ''}"
+                    f"node={d.get('node_token')} | "
+                    f"path={d.get('target_path') or d.get('source_path') or ''}"
                 )
             if len(docs) > 50:
                 print(f"  … 另有 {len(docs) - 50} 篇")
@@ -223,12 +172,15 @@ def main() -> int:
             return 0
 
         pipeline = _build_pipeline(
-            tm, selected=selected, ledger=ledger, skip_existing=skip_existing
+            ctx.tm,
+            selected=selected,
+            ledger=ctx.ledger,
+            skip_existing=ctx.skip_existing,
         )
-        reader = FeishuDocumentReader(tm)
+        reader = FeishuDocumentReader(ctx.tm)
         wiki_meta = None
         if not args.no_author and config.METADATA_TABLE_FETCH_AUTHOR:
-            wiki_meta = WikiMetaClient(tm)
+            wiki_meta = WikiMetaClient(ctx.tm)
 
         counts: Dict[str, int] = {"applied": 0, "skipped": 0, "failed": 0}
         t0 = datetime.now()
@@ -254,7 +206,7 @@ def main() -> int:
                 except Exception as exc:
                     print(f"  ⚠️ 作者解析失败: {exc}")
 
-            ctx = EnrichmentContext(
+            enrich_ctx = EnrichmentContext(
                 target_node_token=node,
                 title=title,
                 obj_token=obj,
@@ -264,7 +216,7 @@ def main() -> int:
                 tag=None,
                 author=author,
             )
-            results: List[StepResult] = pipeline.run(ctx)
+            results: List[StepResult] = pipeline.run(enrich_ctx)
             print(f"  → {format_results(results)}")
             for r in results:
                 counts[r.status] = counts.get(r.status, 0) + 1
@@ -277,7 +229,7 @@ def main() -> int:
         )
         return 1 if counts.get("failed", 0) else 0
     finally:
-        ledger.close()
+        ctx.close()
 
 
 if __name__ == "__main__":

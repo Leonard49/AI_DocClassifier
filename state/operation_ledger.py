@@ -4,6 +4,9 @@ Unified operation ledger for side tools (not core classify/copy).
 
 Each (entity_key, op, node_token) is independent so e.g. metadata_table done
 does not block attachment_separator.
+
+Bitable record_ids use node_token = "bitable:{app_token}/{table_id}" and
+result_ref; skip-existing for a wiki doc uses the wiki node_token.
 """
 
 from __future__ import annotations
@@ -25,6 +28,10 @@ KNOWN_OPS = (
     OP_METADATA_BITABLE,
     OP_DISPLAY_TITLE_BITABLE,
 )
+
+
+def bitable_scope_key(app_token: str, table_id: str) -> str:
+    return f"bitable:{(app_token or '').strip()}/{(table_id or '').strip()}"
 
 
 class OperationLedger:
@@ -186,7 +193,15 @@ class OperationLedger:
 
 
 def default_tool_ops_db_path() -> str:
-    return "tool_ops.db"
+    try:
+        import config
+
+        path = getattr(config, "TOOL_OPS_DB", None)
+        if path:
+            return path
+    except Exception:
+        pass
+    return os.path.join("data", "tools", "tool_ops.db")
 
 
 __all__ = [
@@ -196,5 +211,6 @@ __all__ = [
     "OP_DISPLAY_TITLE_BITABLE",
     "KNOWN_OPS",
     "OperationLedger",
+    "bitable_scope_key",
     "default_tool_ops_db_path",
 ]

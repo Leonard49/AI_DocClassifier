@@ -10,7 +10,16 @@ import os
 
 from .token_manager import TokenManager
 
-_DEFAULT_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wiki_scan_cache.db")
+try:
+    import config as _app_config
+
+    _DEFAULT_DB = getattr(
+        _app_config, "WIKI_SCAN_CACHE_DB", None
+    ) or os.path.join(os.path.dirname(os.path.abspath(__file__)), "wiki_scan_cache.db")
+except Exception:
+    _DEFAULT_DB = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "wiki_scan_cache.db"
+    )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)

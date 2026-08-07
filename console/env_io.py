@@ -50,6 +50,8 @@ CONFIG_SCHEMA: List[Tuple[str, str, str, str]] = [
     ("CLASSIFY_WORKERS", "分类并发", "perf", "int"),
     ("CLASSIFY_MAX_CHARS", "分类正文上限", "perf", "int"),
     ("USE_CLASSIFY_CACHE", "分类缓存", "perf", "bool"),
+    ("DATA_DIR", "本地数据目录", "perf", "path"),
+    ("AUTO_MIGRATE_DATA_DIR", "自动迁移根目录旧库到 data/", "perf", "bool"),
     ("METADATA_BITABLE_MODE", "多维表格模式", "metadata", "str"),
     ("METADATA_BITABLE_TITLE", "汇总表标题", "metadata", "str"),
     ("METADATA_BITABLE_APP_TOKEN", "已有汇总 app_token", "metadata", "str"),

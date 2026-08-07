@@ -7,7 +7,7 @@ import os
 import sqlite3
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from classify.doc_metadata import DOC_TYPES, DocMetadata
 from classify.module_product_map import PRODUCT_LINES
@@ -15,6 +15,12 @@ from feishu.bitable import FeishuBitableClient, FeishuBitableError
 from feishu.create_feishu_node import FeishuNodeCreator
 from feishu.title_check import FolderNameChecker
 from feishu.wiki_meta import WikiMetaClient
+from state.operation_ledger import (
+    OP_METADATA_BITABLE,
+    OperationLedger,
+    bitable_scope_key,
+    default_tool_ops_db_path,
+)
 
 TABLE_NAME = "文档元数据"
 
@@ -46,78 +52,94 @@ class MetadataBitableRef:
 
 
 class MetadataRecordIndex:
-    """Local SQLite: (app_token, table_id, obj_token) -> record_id for upsert."""
+    """
+    Bitable record_id lookup backed by tool_ops.db (result_ref).
 
-    def __init__(self, db_path: str):
-        self.db_path = db_path
-        directory = os.path.dirname(db_path)
-        if directory:
-            os.makedirs(directory, exist_ok=True)
-        self._conn = sqlite3.connect(db_path, timeout=30)
-        self._conn.execute("PRAGMA journal_mode=DELETE")
-        self._ensure_schema()
-        self._conn.commit()
+    Scope key is bitable:{app_token}/{table_id} so multi-table writes
+    do not collide with wiki-node skip rows for the same op.
+    """
 
-    def _table_exists(self, name: str) -> bool:
-        row = self._conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-            (name,),
-        ).fetchone()
-        return row is not None
+    def __init__(
+        self,
+        db_path: Optional[str] = None,
+        *,
+        op: str = OP_METADATA_BITABLE,
+        ledger: Optional[OperationLedger] = None,
+        legacy_index_db: Optional[str] = None,
+    ):
+        self.op = op
+        tool_ops = None
+        try:
+            import config
 
-    def _pk_columns(self, table: str) -> List[str]:
-        # PRAGMA table_info: (cid, name, type, notnull, dflt_value, pk)
-        rows = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
-        ranked = sorted(
-            ((int(r[5]), r[1]) for r in rows if r[5]),
-            key=lambda x: x[0],
-        )
-        return [name for _, name in ranked]
+            tool_ops = getattr(config, "TOOL_OPS_DB", None)
+        except Exception:
+            tool_ops = None
+        tool_ops = tool_ops or default_tool_ops_db_path()
 
-    def _ensure_schema(self) -> None:
-        new_ddl = """
-            CREATE TABLE IF NOT EXISTS metadata_records (
-                app_token TEXT NOT NULL,
-                table_id TEXT NOT NULL,
-                obj_token TEXT NOT NULL,
-                record_id TEXT NOT NULL,
-                updated_at REAL,
-                PRIMARY KEY (app_token, table_id, obj_token)
-            )
-        """
-        if not self._table_exists("metadata_records"):
-            self._conn.execute(new_ddl)
+        legacy = legacy_index_db
+        if (
+            db_path
+            and os.path.abspath(db_path) != os.path.abspath(tool_ops)
+            and os.path.isfile(db_path)
+        ):
+            legacy = legacy or db_path
+
+        if ledger is not None:
+            self._ledger = ledger
+            self._owns_ledger = False
+        else:
+            self._ledger = OperationLedger(tool_ops)
+            self._owns_ledger = True
+
+        self.db_path = self._ledger.db_path
+        self._legacy_imported: Set[str] = set()
+        if legacy:
+            self._import_legacy_index(legacy)
+
+    def _import_legacy_index(self, path: str) -> None:
+        abs_path = os.path.abspath(path)
+        if abs_path in self._legacy_imported or not os.path.isfile(path):
             return
-
-        pk = self._pk_columns("metadata_records")
-        if pk == ["app_token", "table_id", "obj_token"]:
+        self._legacy_imported.add(abs_path)
+        try:
+            conn = sqlite3.connect(path, timeout=30)
+            try:
+                row = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='metadata_records'"
+                ).fetchone()
+                if not row:
+                    return
+                cols = {r[1] for r in conn.execute("PRAGMA table_info(metadata_records)")}
+                if not {"obj_token", "record_id"}.issubset(cols):
+                    return
+                has_app = "app_token" in cols
+                has_table = "table_id" in cols
+                select = "SELECT obj_token, record_id"
+                if has_app:
+                    select += ", app_token"
+                if has_table:
+                    select += ", table_id"
+                select += " FROM metadata_records"
+                for r in conn.execute(select):
+                    obj = r[0]
+                    rid = r[1]
+                    if not obj or not rid:
+                        continue
+                    app = (r[2] if has_app else "") or "__legacy__"
+                    # column index: obj, rid, [app], [table]
+                    table = "__legacy__"
+                    if has_app and has_table:
+                        table = (r[3] or "") or "__legacy__"
+                    elif has_table and not has_app:
+                        table = (r[2] or "") or "__legacy__"
+                    if self.get(obj, app_token=app, table_id=table):
+                        continue
+                    self.put(obj, rid, app_token=app, table_id=table)
+            finally:
+                conn.close()
+        except sqlite3.Error:
             return
-
-        # Legacy single-bitable index: PRIMARY KEY(obj_token)
-        self._conn.execute("ALTER TABLE metadata_records RENAME TO metadata_records_legacy")
-        self._conn.execute(new_ddl)
-        legacy_cols = {
-            r[1]
-            for r in self._conn.execute(
-                "PRAGMA table_info(metadata_records_legacy)"
-            ).fetchall()
-        }
-        has_app = "app_token" in legacy_cols
-        has_table = "table_id" in legacy_cols
-        self._conn.execute(
-            f"""
-            INSERT OR IGNORE INTO metadata_records
-                (app_token, table_id, obj_token, record_id, updated_at)
-            SELECT
-                {"COALESCE(NULLIF(app_token, ''), '__legacy__')" if has_app else "'__legacy__'"},
-                {"COALESCE(NULLIF(table_id, ''), '__legacy__')" if has_table else "'__legacy__'"},
-                obj_token,
-                record_id,
-                {"updated_at" if "updated_at" in legacy_cols else "NULL"}
-            FROM metadata_records_legacy
-            """
-        )
-        self._conn.execute("DROP TABLE metadata_records_legacy")
 
     def get(
         self,
@@ -126,14 +148,13 @@ class MetadataRecordIndex:
         app_token: str,
         table_id: str,
     ) -> Optional[str]:
-        row = self._conn.execute(
-            """
-            SELECT record_id FROM metadata_records
-            WHERE app_token = ? AND table_id = ? AND obj_token = ?
-            """,
-            (app_token, table_id, obj_token),
-        ).fetchone()
-        return row[0] if row else None
+        if not obj_token:
+            return None
+        return self._ledger.get_result_ref(
+            obj_token,
+            self.op,
+            node_token=bitable_scope_key(app_token, table_id),
+        )
 
     def put(
         self,
@@ -143,21 +164,19 @@ class MetadataRecordIndex:
         app_token: str = "",
         table_id: str = "",
     ) -> None:
-        self._conn.execute(
-            """
-            INSERT INTO metadata_records
-                (app_token, table_id, obj_token, record_id, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(app_token, table_id, obj_token) DO UPDATE SET
-                record_id = excluded.record_id,
-                updated_at = excluded.updated_at
-            """,
-            (app_token or "", table_id or "", obj_token, record_id, time.time()),
+        if not obj_token or not record_id:
+            return
+        self._ledger.mark(
+            obj_token,
+            self.op,
+            node_token=bitable_scope_key(app_token, table_id),
+            status="done",
+            result_ref=record_id,
         )
-        self._conn.commit()
 
     def close(self) -> None:
-        self._conn.close()
+        if self._owns_ledger:
+            self._ledger.close()
 
 
 def _select_options(names: Sequence[str]) -> Dict[str, Any]:

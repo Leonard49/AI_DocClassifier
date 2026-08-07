@@ -51,15 +51,8 @@ from state.metadata_bitable import MetadataRecordIndex
 from state.operation_ledger import OP_DISPLAY_TITLE_BITABLE, OperationLedger
 from state.scan_folders import format_folder_table, load_scan_folders, default_scan_folders_path
 from state.shared_state import default_worker_id
-from tools._tool_scope import (
-    SCOPE_SCAN,
-    SCOPE_TARGET,
-    load_tool_documents,
-    open_tool_ledger,
-    resolve_scan_folders_from_args,
-    resolve_scope,
-    resolve_skip_existing,
-)
+from tools._tool_scope import SCOPE_SCAN, SCOPE_TARGET
+from tools.runner import ToolJob, add_scope_args, ensure_utf8_stdio, write_tool_report
 
 from openai import OpenAI
 
@@ -70,26 +63,13 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--list-folders", action="store_true")
-    p.add_argument(
-        "--scope",
-        choices=(SCOPE_TARGET, SCOPE_SCAN),
-        default=None,
-        help="target=TARGET（默认）；scan=源清单",
-    )
-    p.add_argument("--folder", action="append", default=None)
-    p.add_argument("--all-assigned", action="store_true")
-    p.add_argument("--all-enabled", action="store_true")
-    p.add_argument("--folders-file", default=None)
-    p.add_argument("--scan-token", default=None)
-    p.add_argument("--scan-name", default=None)
     p.add_argument("--parent-token", default=None, help="多维表格挂载父节点，默认 TARGET")
     p.add_argument("--aggregated-title", default=None)
     p.add_argument("--max-documents", type=int, default=0)
     p.add_argument("--no-llm", action="store_true")
     p.add_argument("--skip-read", action="store_true")
     p.add_argument("--skip-date-api", action="store_true")
-    p.add_argument("--skip-existing", action="store_true")
-    p.add_argument("--no-skip-existing", action="store_true")
+    add_scope_args(p)
     return p.parse_args()
 
 
@@ -206,12 +186,7 @@ def _write_rows(
 
 
 def main() -> int:
-    if sys.platform == "win32":
-        for stream in (sys.stdout, sys.stderr):
-            try:
-                stream.reconfigure(encoding="utf-8")
-            except Exception:
-                pass
+    ensure_utf8_stdio()
 
     args = _parse_args()
     if args.list_folders:
@@ -220,12 +195,6 @@ def main() -> int:
         print(format_folder_table(load_scan_folders(path), worker_id=worker))
         return 0
 
-    scope = resolve_scope(args.scope)
-    skip_existing = resolve_skip_existing(
-        flag_skip=args.skip_existing,
-        flag_no_skip=args.no_skip_existing,
-        config_key="DISPLAY_TITLE_SKIP_EXISTING",
-    )
     use_llm = (not args.no_llm) and config.DISPLAY_TITLE_USE_LLM_PURPOSE
     parent_token = (args.parent_token or config.TARGET_PARENT_TOKEN or "").strip()
     agg_title = (
@@ -233,53 +202,32 @@ def main() -> int:
         or config.DISPLAY_TITLE_BITABLE_TITLE
         or "文档展示标题"
     )
-
-    try:
-        config.validate(
-            require_scan_source=False,
-            require_llm=use_llm,
-            require_target=True,
-        )
-    except ValueError as exc:
-        print(f"❌ {exc}")
-        return 1
     if not parent_token:
         print("❌ 需要 TARGET_PARENT_TOKEN 或 --parent-token")
         return 1
 
-    tm = TokenManager(config.FEISHU_APP_ID, config.FEISHU_APP_SECRET)
-    folders = resolve_scan_folders_from_args(args) if scope == SCOPE_SCAN else None
-
-    print("=" * 60)
-    print("展示标题 → 多维表格（不改 wiki 原标题）")
-    print(f"scope={scope} | skip_existing={skip_existing} | use_llm={use_llm}")
-    print("=" * 60)
-
-    unique_docs, label = load_tool_documents(
-        tm,
-        scope=scope,
-        max_documents=args.max_documents,
-        folders=folders,
+    job = ToolJob(
+        title="展示标题 → 多维表格（不改 wiki 原标题）",
+        ops=[OP_DISPLAY_TITLE_BITABLE],
+        skip_config_key="DISPLAY_TITLE_SKIP_EXISTING",
+        require_llm=use_llm,
+        require_target=True,
+        require_scan_source=False,
     )
-    print(f"📦 文档宇宙: {label} | 唯一叶子: {len(unique_docs)}")
-    if not unique_docs:
-        print("✅ 无文档（TARGET 下尚无叶子，或请先跑分类复制）")
-        return 0
-
-    ledger = open_tool_ledger()
     try:
-        if skip_existing:
-            before = len(unique_docs)
-            unique_docs = ledger.filter_pending(
-                unique_docs,
-                [OP_DISPLAY_TITLE_BITABLE],
-                require_all_ops=True,
-            )
-            n = before - len(unique_docs)
-            if n:
-                print(f"⏭️ ledger 已写跳过: {n}，剩余 {len(unique_docs)}")
+        ctx = job.open(args, require_llm=use_llm, banner_extra=f"use_llm={use_llm}")
+    except ValueError as exc:
+        print(f"❌ {exc}")
+        return 1
+
+    skip_existing = ctx.skip_existing
+    tm = ctx.tm
+    ledger = ctx.ledger
+    unique_docs = ctx.docs
+
+    try:
         if not unique_docs:
-            print("✅ 全部已处理")
+            print("✅ 无文档（TARGET 下尚无叶子，或请先跑分类复制）")
             return 0
 
         reader = FeishuDocumentReader(tm)
@@ -345,7 +293,7 @@ def main() -> int:
             print(f"  · {row.original_title}\n    → {row.display_title}")
 
         report = {
-            "scope": scope,
+            "scope": ctx.scope,
             "dry_run": args.dry_run,
             "documents": [r.to_dict() for r in rows],
             "writes": {},
@@ -356,7 +304,13 @@ def main() -> int:
             name_checker = FolderNameChecker(tm)
             creator = FeishuNodeCreator(tm, config.SPACE_ID)
             bitable = FeishuBitableClient(tm)
-            index = MetadataRecordIndex(config.DISPLAY_TITLE_BITABLE_INDEX_DB)
+            index = MetadataRecordIndex(
+                ledger=ledger,
+                op=OP_DISPLAY_TITLE_BITABLE,
+                legacy_index_db=getattr(
+                    config, "DISPLAY_TITLE_BITABLE_INDEX_DB", None
+                ),
+            )
             try:
                 ref = ensure_display_title_bitable(
                     space_id=config.SPACE_ID,
@@ -379,16 +333,13 @@ def main() -> int:
             finally:
                 index.close()
 
-        os.makedirs(config.LOG_DIR or "logs", exist_ok=True)
-        path = os.path.join(config.LOG_DIR or "logs", "display_title_bitable.json")
         report["finished_at"] = datetime.now().isoformat(timespec="seconds")
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(report, f, ensure_ascii=False, indent=2)
+        path = write_tool_report("display_title_bitable.json", report)
         print(f"\n📄 报告: {path}")
         print("✅ 完成")
         return 0
     finally:
-        ledger.close()
+        ctx.close()
 
 
 if __name__ == "__main__":

@@ -10,6 +10,13 @@ try:
 except ImportError:
     pass
 
+from util.paths import (
+    default_data_dir,
+    leftover_legacy_hints,
+    migrate_legacy_local_files,
+    resolve_configurable_path,
+)
+
 
 def _env(key: str, default: Optional[str] = None) -> Optional[str]:
     value = os.getenv(key, default)
@@ -55,6 +62,10 @@ TARGET_PARENT_TOKEN = _env("TARGET_PARENT_TOKEN")
 TARGET_ROOT_NAME = _env("TARGET_ROOT_NAME")
 FALLBACK_PARENT_TOKEN = _env("FALLBACK_PARENT_TOKEN")
 
+# Local runtime data root (core + tools). Shared UNC paths stay in their own env vars.
+DATA_DIR = _env("DATA_DIR") or default_data_dir()
+AUTO_MIGRATE_DATA_DIR = _env_bool("AUTO_MIGRATE_DATA_DIR", True)
+
 # Processing behavior
 USE_CACHE = _env_bool("USE_CACHE", False)
 MAX_DOCUMENTS = _env_int("MAX_DOCUMENTS", 0) or None
@@ -68,10 +79,29 @@ ENABLE_ATTACHMENT_EXTRACT = _env_bool("ENABLE_ATTACHMENT_EXTRACT", False)
 SAVE_PROGRESS = _env_bool("SAVE_PROGRESS", True)
 FORCE_RESCAN = _env_bool("FORCE_RESCAN", False)
 ENABLE_SCAN_SNAPSHOT = _env_bool("ENABLE_SCAN_SNAPSHOT", True)
-SCAN_SNAPSHOT_DB = _env("SCAN_SNAPSHOT_DB") or "scan_snapshot.db"
+SCAN_SNAPSHOT_DB = resolve_configurable_path(
+    _env("SCAN_SNAPSHOT_DB"),
+    data_dir=DATA_DIR,
+    default_relative="core/scan_snapshot.db",
+)
 FULL_SCAN_CALIBRATION_DAYS = _env_int("FULL_SCAN_CALIBRATION_DAYS", 7)
 SAVE_RUN_LOG = _env_bool("SAVE_RUN_LOG", True)
 LOG_DIR = _env("LOG_DIR", "logs") or "logs"
+PROCESSING_PROGRESS_FILE = resolve_configurable_path(
+    _env("PROCESSING_PROGRESS_FILE"),
+    data_dir=DATA_DIR,
+    default_relative="core/processing_progress.json",
+)
+CLASSIFY_CACHE_DB = resolve_configurable_path(
+    _env("CLASSIFY_CACHE_DB"),
+    data_dir=DATA_DIR,
+    default_relative="core/classify_cache.db",
+)
+WIKI_SCAN_CACHE_DB = resolve_configurable_path(
+    _env("WIKI_SCAN_CACHE_DB"),
+    data_dir=DATA_DIR,
+    default_relative="core/wiki_scan_cache.db",
+)
 
 # Performance tuning
 READ_WORKERS = _env_int("READ_WORKERS", 2)
@@ -95,7 +125,12 @@ LLM_MODEL = _env("LLM_MODEL") or "deepseek-v4-flash"
 
 # Multi-worker parallel processing (shared folder on network drive recommended)
 ENABLE_SHARED_DEDUP = _env_bool("ENABLE_SHARED_DEDUP", True)
-SHARED_STATE_DB = _env("SHARED_STATE_DB") or "shared_copy_state.db"
+# Default local copy under data/core; production should set UNC SHARED_STATE_DB
+SHARED_STATE_DB = resolve_configurable_path(
+    _env("SHARED_STATE_DB"),
+    data_dir=DATA_DIR,
+    default_relative="core/shared_copy_state.db",
+)
 WORKER_ID = _env("WORKER_ID")
 CLAIM_TIMEOUT_MINUTES = _env_int("CLAIM_TIMEOUT_MINUTES", 30)
 
@@ -111,7 +146,12 @@ FEISHU_DOWNLOAD_TIMEOUT = _env_float("FEISHU_DOWNLOAD_TIMEOUT", 180.0)
 # Document metadata → Feishu bitable (standalone tool)
 METADATA_BITABLE_TITLE = _env("METADATA_BITABLE_TITLE") or "文档元数据汇总"
 METADATA_BITABLE_APP_TOKEN = _env("METADATA_BITABLE_APP_TOKEN")
-METADATA_BITABLE_INDEX_DB = _env("METADATA_BITABLE_INDEX_DB") or "metadata_bitable_index.db"
+# Deprecated: bitable record ids live in TOOL_OPS_DB; kept for one-release compat migrate
+METADATA_BITABLE_INDEX_DB = resolve_configurable_path(
+    _env("METADATA_BITABLE_INDEX_DB"),
+    data_dir=DATA_DIR,
+    default_relative="tools/metadata_bitable_index.db",
+)
 METADATA_BITABLE_PER_TOKEN_TITLE_TMPL = (
     _env("METADATA_BITABLE_PER_TOKEN_TITLE_TMPL") or "文档元数据-{id}"
 )
@@ -123,15 +163,20 @@ METADATA_USE_LLM_DOC_TYPE = _env_bool("METADATA_USE_LLM_DOC_TYPE", True)
 METADATA_BITABLE_SKIP_EXISTING = _env_bool("METADATA_BITABLE_SKIP_EXISTING", False)
 
 # Side tools: document universe + unified operation ledger
-# target = only docs under TARGET_PARENT_TOKEN; scan = source folders (legacy)
 TOOL_DOC_SCOPE = (_env("TOOL_DOC_SCOPE") or "target").strip().lower()
-TOOL_OPS_DB = _env("TOOL_OPS_DB") or "tool_ops.db"
+TOOL_OPS_DB = resolve_configurable_path(
+    _env("TOOL_OPS_DB"),
+    data_dir=DATA_DIR,
+    default_relative="tools/tool_ops.db",
+)
 
 # Display titles → Feishu bitable (standalone; does NOT rename wiki titles)
 DISPLAY_TITLE_BITABLE_TITLE = _env("DISPLAY_TITLE_BITABLE_TITLE") or "文档展示标题"
 DISPLAY_TITLE_BITABLE_APP_TOKEN = _env("DISPLAY_TITLE_BITABLE_APP_TOKEN")
-DISPLAY_TITLE_BITABLE_INDEX_DB = (
-    _env("DISPLAY_TITLE_BITABLE_INDEX_DB") or "display_title_bitable_index.db"
+DISPLAY_TITLE_BITABLE_INDEX_DB = resolve_configurable_path(
+    _env("DISPLAY_TITLE_BITABLE_INDEX_DB"),
+    data_dir=DATA_DIR,
+    default_relative="tools/display_title_bitable_index.db",
 )
 DISPLAY_TITLE_BITABLE_PER_TOKEN_TITLE_TMPL = (
     _env("DISPLAY_TITLE_BITABLE_PER_TOKEN_TITLE_TMPL") or "展示标题-{id}"
@@ -148,6 +193,29 @@ DISPLAY_TITLE_SKIP_EXISTING = _env_bool("DISPLAY_TITLE_SKIP_EXISTING", False)
 # Enrichment backfill skip (per-op in TOOL_OPS_DB)
 ENRICHMENT_SKIP_EXISTING = _env_bool("ENRICHMENT_SKIP_EXISTING", False)
 
+_MIGRATION_DONE = False
+
+
+def ensure_runtime_layout(*, quiet: bool = False) -> None:
+    """Create data dirs and optionally migrate legacy root-level local files once."""
+    global _MIGRATION_DONE
+    if _MIGRATION_DONE:
+        return
+    _MIGRATION_DONE = True
+    os.makedirs(os.path.join(DATA_DIR, "core"), exist_ok=True)
+    os.makedirs(os.path.join(DATA_DIR, "tools"), exist_ok=True)
+    if AUTO_MIGRATE_DATA_DIR:
+        messages = migrate_legacy_local_files(DATA_DIR)
+        if messages and not quiet:
+            print("📁 本地数据目录迁移:")
+            for msg in messages:
+                print(f"   - {msg}")
+    leftover = leftover_legacy_hints(DATA_DIR)
+    if leftover and not quiet:
+        print("💡 本地数据目录提示:")
+        for msg in leftover:
+            print(f"   - {msg}")
+
 
 def validate(
     *,
@@ -156,6 +224,7 @@ def validate(
     require_target: bool = True,
 ) -> None:
     """Raise ValueError when required settings are missing."""
+    ensure_runtime_layout()
     missing = []
     if not FEISHU_APP_ID:
         missing.append("FEISHU_APP_ID")

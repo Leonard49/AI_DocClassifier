@@ -285,7 +285,7 @@ python -m tools.others_theme_classify_move
 | `logs/others_reclassify_move.json` | Others 产品线纠偏报告 |
 | `logs/others_theme_classify_move.json` | Others 主题归档报告 |
 | `logs/doc_metadata_bitable.json` | 元数据写入多维表格报告 |
-| `processing_progress.json` | 本机断点续跑（勿手动改） |
-| `scan_snapshot.db` | 本机扫描快照（增量用） |
+| `data/core/processing_progress.json` | 本机断点续跑（勿手动改） |
+| `data/core/scan_snapshot.db` | 本机扫描快照（增量用） |
+| `data/tools/tool_ops.db` | 侧工具操作账本（含 bitable record_id） |
 | `scan_folders.json` | 源文件夹 token 清单 |
-| `metadata_bitable_index.db` | 多维表格 upsert 本地索引 |

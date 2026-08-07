@@ -4,6 +4,7 @@
 
 import hashlib
 import json
+import os
 import sqlite3
 import threading
 from datetime import datetime
@@ -15,6 +16,9 @@ class ClassifyCache:
 
     def __init__(self, db_path: str = "classify_cache.db"):
         self.db_path = db_path
+        directory = os.path.dirname(db_path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
         self._lock = threading.Lock()
         self._init_db()
 

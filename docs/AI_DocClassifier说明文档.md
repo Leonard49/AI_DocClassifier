@@ -434,33 +434,34 @@ READ_WORKERS=2
 
 ## 八、运行时文件
 
+本地默认根目录为 `DATA_DIR`（默认 `data/`）：
+
+- **Core**：`data/core/` — `scan_snapshot.db`、`classify_cache.db`、`processing_progress.json`、`wiki_scan_cache.db` 等  
+- **Tools**：`data/tools/tool_ops.db` — 侧工具唯一操作账本（含 bitable `record_id`）  
+- **共享盘**：`SHARED_STATE_DB` / `FEISHU_RATE_LIMIT_DB` 等继续用 UNC，不强制进个人 `data/`
+
 | 文件 | 条件 | 用途 | Git |
 |------|------|------|-----|
 | `.env` | 手动创建 | 本地配置 | 忽略 |
-| `processing_progress.json` | `SAVE_PROGRESS=true` | 本机断点（按 `SCAN_ROOT_TOKEN`） | 忽略 |
-| `shared_copy_state.db` | `ENABLE_SHARED_DEDUP=true` | 全局去重（建议放共享盘） | 忽略 |
-| `classify_cache.db` | `USE_CLASSIFY_CACHE=true` | AI 分类缓存 | 忽略 |
-| `wiki_scan_cache.db` | `USE_CACHE=true` | 扫描 BFS 断点 | 忽略 |
-| `scanned_documents_*.json` | `USE_CACHE=true` | 扫描结果快照 | 忽略 |
-| `scan_snapshot.db` | `ENABLE_SCAN_SNAPSHOT=true` | 扫描快照（Plan B 增量） | 忽略 |
-| `logs/latest.log` | `SAVE_RUN_LOG=true` | 运行日志 | 忽略 |
-| `logs/attachment_extract.json` | 附件提取开启且有结果 | 附件提取统计与失败清单 | 忽略 |
-| `logs/excluded_reports.json` | 每次运行 | 排除类文档清单 | 忽略 |
-| `logs/classification_failures.json` | 有分类失败时 | 分类失败文档清单 | 忽略 |
-| `logs/doc_metadata_bitable.json` | 元数据导出工具 | 多维表格写入报告 | 忽略 |
-| `logs/others_reclassify_move.json` | Others 纠偏工具 | 产品线纠偏报告 | 忽略 |
-| `logs/others_theme_classify_move.json` | 主题归档工具 | Others 主题归档报告 | 忽略 |
-| `metadata_bitable_index.db` | 元数据导出 | bitable upsert 本地索引 | 忽略 |
+| `data/core/processing_progress.json` | `SAVE_PROGRESS=true` | 本机断点（按 `SCAN_ROOT_TOKEN`） | 忽略 |
+| `SHARED_STATE_DB`（常为 UNC） | `ENABLE_SHARED_DEDUP=true` | 全局去重 | 忽略 |
+| `data/core/classify_cache.db` | `USE_CLASSIFY_CACHE=true` | AI 分类缓存 | 忽略 |
+| `data/core/wiki_scan_cache.db` | `USE_CACHE=true` | 扫描 BFS 断点 | 忽略 |
+| `data/core/scan_snapshot.db` | `ENABLE_SCAN_SNAPSHOT=true` | 扫描快照（Plan B 增量） | 忽略 |
+| `data/tools/tool_ops.db` | 侧工具 | 按 op 的 skip / result_ref | 忽略 |
+| `logs/*.json` | 各工具/主流程 | 运行与导出报告 | 忽略 |
 | `scan_folders.json` | 推荐 | 源文件夹 token 与分工清单 | 可提交 |
+
+旧根目录 `*_index.db` / `tool_ops.db` 等可在启动时迁入 `data/`（`AUTO_MIGRATE_DATA_DIR=true`）。
 
 ### 重置测试环境
 
 删除以下文件即可全量重跑（**保留 `.env`**）：
 
 ```powershell
-Remove-Item processing_progress.json, classify_cache.db, wiki_scan_cache.db, shared_copy_state.db -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force data\core, data\tools -ErrorAction SilentlyContinue
 Remove-Item scanned_documents_*.json -ErrorAction SilentlyContinue
-# 共享盘上的 shared_copy_state.db 及 -wal/-shm 也需删除
+# 共享盘上的 SHARED_STATE_DB 及 -wal/-shm 也需按需删除
 ```
 
 或设 `FORCE_RESCAN=true`（仅忽略本机 progress，不清理共享库与分类缓存）。

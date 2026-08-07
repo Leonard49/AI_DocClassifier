@@ -169,26 +169,46 @@
 
 ---
 
+## `feature/arch-data-dir-cleanup`（数据目录 + 账本收敛）
+
+**基于：** `feature/tool-ops-target-scope`
+
+**主要变化：**
+
+| 能力 | 说明 |
+|------|------|
+| `DATA_DIR` | 默认 `data/`；Core → `data/core/`，Tools → `data/tools/tool_ops.db` |
+| 旧库迁移 | 根目录 `*.db` 可自动迁入 `data/`（`AUTO_MIGRATE_DATA_DIR`） |
+| 账本唯一 | bitable `record_id` 写入 `operations.result_ref`；废弃独立 `*_index.db` |
+| ToolJob | `tools/runner.py` 统一 scope / skip / 报告 |
+| 文档 | Core vs Tools 边界；根 shim / `attachment_extractors/` 标明遗留 |
+
+**关联文件：** `util/paths.py`、`config.py`、`tools/runner.py`、`state/metadata_bitable.py`
+
+---
+
 ## 分支关系
 
 ```
 master
   └── … → feature/console-ui
               └── feature/doc-enrichment
-                    └── feature/tool-ops-target-scope  ← 当前推荐（工具架构）
+                    └── feature/tool-ops-target-scope
+                          └── feature/arch-data-dir-cleanup  ← 当前推荐
 ```
 
 ## 选用建议
 
 | 场景 | 推荐分支 |
 |------|----------|
-| **生产推荐（TARGET 工具 + 操作账本）** | **`feature/tool-ops-target-scope`** |
-| 图形化配置 + enrichment（上一版） | `feature/doc-enrichment` |
+| **生产推荐（data/ + 统一账本 + TARGET 工具）** | **`feature/arch-data-dir-cleanup`** |
+| 上一版（TARGET 工具，根目录 .db） | `feature/tool-ops-target-scope` |
+| 图形化配置 + enrichment | `feature/doc-enrichment` |
 
 ## 切换与更新
 
 ```powershell
 git fetch origin
-git checkout feature/tool-ops-target-scope
-git pull origin feature/tool-ops-target-scope
+git checkout feature/arch-data-dir-cleanup
+git pull origin feature/arch-data-dir-cleanup
 ```

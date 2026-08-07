@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .env
 resource.txt
+# Legacy root-level state (pre data/ layout)
 classify_cache.db
 wiki_scan_cache.db
 scan_snapshot.db
@@ -13,6 +14,8 @@ metadata_bitable_index.db
 display_title_bitable_index.db
 tool_ops.db
 enrichment_backfill_index.db
+# Runtime data directory
+data/
 logs/
 run.log
 !logs/.gitkeep

@@ -6,6 +6,7 @@ Feishu wiki document classifier: scan leaf documents, classify with LLM, copy to
 
 import argparse
 import json
+import os
 import sys
 import threading
 import requests
@@ -230,11 +231,14 @@ def get_target_root_token(token_manager: TokenManager) -> Optional[str]:
     print(f"📁 未找到目标节点，将使用知识库根目录")
     return None
 
-def save_processing_progress(processed_tokens: set, filename: str = "processing_progress.json"):
+def save_processing_progress(processed_tokens: set, filename: str = None):
     """保存处理进度"""
     if not SAVE_PROGRESS:
         return
-    
+    path = filename or config.PROCESSING_PROGRESS_FILE
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
     progress_data = {
         "processed_tokens": list(processed_tokens),
         "total_processed": len(processed_tokens),
@@ -242,18 +246,18 @@ def save_processing_progress(processed_tokens: set, filename: str = "processing_
         "scan_root": SCAN_ROOT_TOKEN,
         "target_root": TARGET_ROOT_NAME
     }
-    with open(filename, "w", encoding="utf-8") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(progress_data, f, ensure_ascii=False, indent=2)
 
-def load_processing_progress(filename: str = "processing_progress.json") -> set:
+def load_processing_progress(filename: str = None) -> set:
     """加载处理进度"""
     if not SAVE_PROGRESS or FORCE_RESCAN:
         if FORCE_RESCAN:
             print("⚠️ FORCE_RESCAN 已启用，将重新处理所有文档")
         return set()
-    
+    path = filename or config.PROCESSING_PROGRESS_FILE
     try:
-        with open(filename, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
             # 如果扫描目录变了，清空进度
             if data.get("scan_root") != SCAN_ROOT_TOKEN:
@@ -1032,7 +1036,9 @@ def _run_pipeline(folder: Optional[ScanFolder] = None):
     # 2. 初始化组件
     print("\n🔧 步骤2: 初始化组件...")
     reader = FeishuDocumentReader(token_manager)
-    classify_cache = ClassifyCache() if USE_CLASSIFY_CACHE else None
+    classify_cache = (
+        ClassifyCache(config.CLASSIFY_CACHE_DB) if USE_CLASSIFY_CACHE else None
+    )
     classifier = LLMTreeClassifier(
         LLM_API_KEY,
         model=LLM_MODEL,
@@ -1102,7 +1108,11 @@ def _run_pipeline(folder: Optional[ScanFolder] = None):
     print(f"\n✅ 扫描范围 token: {scan_root_token}")
     print(f"✅ 目标目录 token: {target_root_token if target_root_token else '知识库根目录'}")
 
-    scanner = SimpleWikiScanner(token_manager, enable_db_cache=USE_CACHE)
+    scanner = SimpleWikiScanner(
+        token_manager,
+        db_path=config.WIKI_SCAN_CACHE_DB,
+        enable_db_cache=USE_CACHE,
+    )
 
     print("\n📂 统计目标目录当前文档数（处理前）...")
     target_count_before = count_target_leaf_documents(
