@@ -113,7 +113,7 @@ def read_env_map(path: Optional[str] = None) -> Dict[str, str]:
             path = example
         else:
             return result
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, "r", encoding="utf-8-sig") as f:
         for line in f:
             key, val, kind = _parse_line(line)
             if kind == "kv" and key:
@@ -139,10 +139,10 @@ def write_env_updates(updates: Dict[str, str], path: Optional[str] = None) -> st
     path = path or env_path()
     lines: List[str] = []
     if os.path.isfile(path):
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8-sig") as f:
             lines = f.readlines()
     elif os.path.isfile(DEFAULT_EXAMPLE_PATH):
-        with open(DEFAULT_EXAMPLE_PATH, "r", encoding="utf-8") as f:
+        with open(DEFAULT_EXAMPLE_PATH, "r", encoding="utf-8-sig") as f:
             lines = f.readlines()
 
     clean_updates: Dict[str, str] = {}

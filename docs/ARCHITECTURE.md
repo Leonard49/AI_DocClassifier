@@ -131,9 +131,10 @@ logs/
 
 | 筛选 | 归属 | 典型任务 |
 |------|------|----------|
-| 分类 | Core | `main.py --all-assigned` |
-| 元数据表 | Tools | `export_doc_metadata_bitable` |
+| 主流程 | Core | `main.py --all-assigned` 等 |
+| 副本增强 | Tools | `enrich_copied_docs` |
+| 文档元数据表 | Tools | `export_doc_metadata_bitable` |
 | **归纳新标题** | Tools | `export_display_title_bitable` |
-| 工具 | Tools | enrich 回填、Others、附件重试 |
+| 运维纠偏 | Tools | Others / 附件重试 |
 
 详见 [CONSOLE.md](CONSOLE.md)。

@@ -6,6 +6,7 @@
   let configValues = {};
   let folders = [];
   let jobs = [];
+  let jobCategories = [];
   let jobCat = "all";
   let logOffset = 0;
   let pollTimer = null;
@@ -21,9 +22,27 @@
   }
 
   function showMsg(el, text, isErr = false) {
+    if (!el) return;
     el.hidden = false;
     el.textContent = text;
     el.classList.toggle("err", !!isErr);
+    try {
+      el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  function setBusy(btn, busy, labelWhenBusy) {
+    if (!btn) return;
+    if (busy) {
+      btn.dataset.prevText = btn.textContent;
+      btn.disabled = true;
+      if (labelWhenBusy) btn.textContent = labelWhenBusy;
+    } else {
+      btn.disabled = false;
+      if (btn.dataset.prevText) btn.textContent = btn.dataset.prevText;
+    }
   }
 
   // Tabs
@@ -68,24 +87,73 @@
   }
 
   // Jobs
+  const CATEGORY_FALLBACK = [
+    { id: "core", label: "主流程", hint: "扫描源目录 → 分类复制到 TARGET" },
+    { id: "enrich", label: "副本增强", hint: "只处理 TARGET 已复制文档" },
+    { id: "bitable_meta", label: "文档元数据表", hint: "文档元数据 → 飞书多维表格" },
+    { id: "bitable_title", label: "归纳新标题", hint: "TARGET，不改 wiki 原标题" },
+    { id: "ops", label: "运维纠偏", hint: "Others / 附件重试" },
+  ];
+
   async function loadJobs() {
     const data = await api("/api/jobs/catalog");
     jobs = data.jobs || [];
+    jobCategories = data.categories && data.categories.length ? data.categories : CATEGORY_FALLBACK;
     renderJobs();
+  }
+
+  function jobBadges(j) {
+    const tags = [];
+    if (j.scope === "target") tags.push('<span class="tag tag-target">TARGET</span>');
+    if (j.scope === "scan") tags.push('<span class="tag tag-scan">扫源</span>');
+    if (j.dry_run) tags.push('<span class="tag tag-dry">试跑</span>');
+    if (j.danger) tags.push('<span class="tag tag-danger">慎用</span>');
+    if (j.needs_folder) tags.push('<span class="tag tag-folder">需选 folder</span>');
+    return tags.join("");
+  }
+
+  function renderJobButton(j) {
+    const cls = ["job-item"];
+    if (j.dry_run) cls.push("dry");
+    if (j.danger) cls.push("danger-job");
+    return `
+      <button class="${cls.join(" ")}" data-id="${esc(j.id)}" data-needs="${j.needs_folder ? "1" : "0"}">
+        <span class="t-row"><span class="t">${esc(j.title)}</span><span class="tags">${jobBadges(j)}</span></span>
+        <span class="d">${esc(j.description || j.category)}</span>
+      </button>`;
+  }
+
+  function sortJobsInGroup(list) {
+    // formal first, dry_run last; keep relative order otherwise
+    return [...list].sort((a, b) => Number(!!a.dry_run) - Number(!!b.dry_run));
   }
 
   function renderJobs() {
     const list = $("#jobList");
-    const filtered = jobs.filter((j) => jobCat === "all" || j.category === jobCat);
-    list.innerHTML = filtered
-      .map(
-        (j) => `
-      <button class="job-item" data-id="${esc(j.id)}" data-needs="${j.needs_folder ? "1" : "0"}">
-        <span class="t">${esc(j.title)}</span>
-        <span class="d">${esc(j.description || j.category)}</span>
-      </button>`
-      )
+    const cats = jobCategories.length ? jobCategories : CATEGORY_FALLBACK;
+    const visibleCats =
+      jobCat === "all" ? cats : cats.filter((c) => c.id === jobCat);
+
+    const html = visibleCats
+      .map((cat) => {
+        const groupJobs = sortJobsInGroup(
+          jobs.filter((j) => j.category === cat.id)
+        );
+        if (!groupJobs.length) return "";
+        return `
+          <section class="job-group" data-cat="${esc(cat.id)}">
+            <header class="job-group-head">
+              <h3>${esc(cat.label)}</h3>
+              <p>${esc(cat.hint || "")}</p>
+            </header>
+            <div class="job-group-body">
+              ${groupJobs.map(renderJobButton).join("")}
+            </div>
+          </section>`;
+      })
       .join("");
+
+    list.innerHTML = html || '<p class="hint">该分组暂无任务</p>';
     list.querySelectorAll(".job-item").forEach((btn) => {
       btn.addEventListener("click", () => startJob(btn.dataset.id, btn.dataset.needs === "1"));
     });
@@ -199,19 +267,48 @@
     return out;
   }
 
-  $("#btnReloadConfig").addEventListener("click", () => loadConfig().catch((e) => alert(e.message)));
+  $("#btnReloadConfig").addEventListener("click", async () => {
+    const btn = $("#btnReloadConfig");
+    setBusy(btn, true, "加载中…");
+    try {
+      await loadConfig();
+      showMsg($("#configMsg"), "已从磁盘重新加载 .env", false);
+    } catch (e) {
+      showMsg($("#configMsg"), e.message, true);
+      alert(e.message);
+    } finally {
+      setBusy(btn, false);
+    }
+  });
   $("#revealSecrets").addEventListener("change", () => loadConfig().catch((e) => alert(e.message)));
   $("#btnSaveConfig").addEventListener("click", async () => {
+    const btn = $("#btnSaveConfig");
+    setBusy(btn, true, "保存中…");
     try {
       const res = await api("/api/config", {
         method: "PUT",
         body: JSON.stringify({ values: collectConfig() }),
       });
-      showMsg($("#configMsg"), res.note || "已保存", !res.validation?.ok);
+      const v = res.validation || {};
+      let text = res.note || "已保存";
+      if (res.path) text += ` → ${res.path}`;
+      if (v.ok === false && v.error) {
+        text += `（校验告警：${v.error}）`;
+      }
+      // 已写入磁盘即成功；校验缺项只作告警，不要伪装成失败无反馈
+      showMsg($("#configMsg"), text, false);
+      if (v.ok === false) {
+        $("#configMsg").classList.add("warn");
+      } else {
+        $("#configMsg").classList.remove("warn");
+      }
       await refreshStatus();
       await loadConfig();
     } catch (e) {
-      showMsg($("#configMsg"), e.message, true);
+      showMsg($("#configMsg"), "保存失败：" + e.message, true);
+      alert("保存失败：" + e.message);
+    } finally {
+      setBusy(btn, false);
     }
   });
 

@@ -24,128 +24,62 @@ class JobSpec:
     category: str
     description: str
     argv: List[str]
+    scope: str = ""  # target | scan | ""
+    dry_run: bool = False
+    danger: bool = False
+    needs_folder: bool = False
+
+
+# Filter chip order for console "全部" grouping
+JOB_CATEGORY_META: List[Dict[str, str]] = [
+    {"id": "core", "label": "主流程", "hint": "扫描源目录 → 分类复制到 TARGET"},
+    {"id": "enrich", "label": "副本增强", "hint": "只处理 TARGET 已复制文档（贴表 / 附件分隔）"},
+    {
+        "id": "bitable_meta",
+        "label": "文档元数据表",
+        "hint": "文档元数据 → 飞书多维表格（默认 TARGET）",
+    },
+    {
+        "id": "bitable_title",
+        "label": "归纳新标题",
+        "hint": "展示标题 → 多维表格（TARGET，不改 wiki 原标题）",
+    },
+    {"id": "ops", "label": "运维纠偏", "hint": "Others 纠偏 / 主题归档 / 附件重试"},
+]
 
 
 JOB_CATALOG: List[JobSpec] = [
+    # --- core ---
     JobSpec(
         "list_folders",
         "列出清单分工",
-        "classify",
+        "core",
         "python main.py --list-folders",
         [sys.executable, "main.py", "--list-folders"],
     ),
     JobSpec(
         "classify_assigned",
         "分类复制（我的文件夹）",
-        "classify",
-        "python main.py --all-assigned",
+        "core",
+        "python main.py --all-assigned（assignee == WORKER_ID）",
         [sys.executable, "main.py", "--all-assigned"],
+        scope="scan",
     ),
     JobSpec(
         "classify_all_enabled",
         "分类复制（清单全部 enabled）",
-        "classify",
-        "python main.py --all-enabled",
+        "core",
+        "会跑清单内全部 enabled，慎用",
         [sys.executable, "main.py", "--all-enabled"],
+        scope="scan",
+        danger=True,
     ),
-    JobSpec(
-        "metadata_per_token",
-        "元数据 → 按 token 分表（扫源）",
-        "metadata",
-        "export_doc_metadata_bitable --scope scan --all-assigned --mode per-token",
-        [
-            sys.executable,
-            "-m",
-            "tools.export_doc_metadata_bitable",
-            "--scope",
-            "scan",
-            "--all-assigned",
-            "--mode",
-            "per-token",
-        ],
-    ),
-    JobSpec(
-        "metadata_both",
-        "元数据 → 汇总+分表 (TARGET)",
-        "metadata",
-        "export_doc_metadata_bitable --scope target --mode both",
-        [
-            sys.executable,
-            "-m",
-            "tools.export_doc_metadata_bitable",
-            "--scope",
-            "target",
-            "--mode",
-            "both",
-        ],
-    ),
-    JobSpec(
-        "metadata_aggregated",
-        "元数据 → 仅汇总表（TARGET）",
-        "metadata",
-        "export_doc_metadata_bitable --scope target --mode aggregated",
-        [
-            sys.executable,
-            "-m",
-            "tools.export_doc_metadata_bitable",
-            "--scope",
-            "target",
-            "--mode",
-            "aggregated",
-        ],
-    ),
-    JobSpec(
-        "metadata_dry",
-        "元数据试跑（TARGET 20 篇 dry-run）",
-        "metadata",
-        "dry-run --max-documents 20",
-        [
-            sys.executable,
-            "-m",
-            "tools.export_doc_metadata_bitable",
-            "--scope",
-            "target",
-            "--mode",
-            "aggregated",
-            "--dry-run",
-            "--max-documents",
-            "20",
-        ],
-    ),
-    JobSpec(
-        "display_title_agg",
-        "归纳新标题 → 多维表格（TARGET，不改 wiki）",
-        "titles",
-        "export_display_title_bitable --scope target（日期-型号或路径-作用）",
-        [
-            sys.executable,
-            "-m",
-            "tools.export_display_title_bitable",
-            "--scope",
-            "target",
-        ],
-    ),
-    JobSpec(
-        "display_title_dry",
-        "归纳新标题试跑（TARGET 20 篇 dry-run）",
-        "titles",
-        "display_title dry-run --max-documents 20",
-        [
-            sys.executable,
-            "-m",
-            "tools.export_display_title_bitable",
-            "--scope",
-            "target",
-            "--dry-run",
-            "--max-documents",
-            "20",
-        ],
-    ),
+    # --- enrich ---
     JobSpec(
         "enrich_backfill",
-        "副本增强回填（TARGET：元数据表+附件分隔）",
-        "tools",
-        "tools.enrich_copied_docs --scope target",
+        "副本增强回填（正式）",
+        "enrich",
+        "TARGET：贴元数据表 + 附件分隔符",
         [
             sys.executable,
             "-m",
@@ -153,12 +87,13 @@ JOB_CATALOG: List[JobSpec] = [
             "--scope",
             "target",
         ],
+        scope="target",
     ),
     JobSpec(
         "enrich_backfill_dry",
-        "副本增强回填试跑（TARGET 20 篇 dry-run）",
-        "tools",
-        "enrich_copied_docs --dry-run --limit 20",
+        "副本增强回填（试跑 · 最多 20 篇 · 不写飞书）",
+        "enrich",
+        "tools.enrich_copied_docs --dry-run --limit 20",
         [
             sys.executable,
             "-m",
@@ -169,25 +104,131 @@ JOB_CATALOG: List[JobSpec] = [
             "--limit",
             "20",
         ],
+        scope="target",
+        dry_run=True,
+    ),
+    # --- bitable_meta ---
+    JobSpec(
+        "metadata_aggregated",
+        "文档元数据 → 仅汇总表（TARGET）",
+        "bitable_meta",
+        "export_doc_metadata_bitable --scope target --mode aggregated",
+        [
+            sys.executable,
+            "-m",
+            "tools.export_doc_metadata_bitable",
+            "--scope",
+            "target",
+            "--mode",
+            "aggregated",
+        ],
+        scope="target",
     ),
     JobSpec(
+        "metadata_both",
+        "文档元数据 → 汇总+分表（TARGET）",
+        "bitable_meta",
+        "export_doc_metadata_bitable --scope target --mode both",
+        [
+            sys.executable,
+            "-m",
+            "tools.export_doc_metadata_bitable",
+            "--scope",
+            "target",
+            "--mode",
+            "both",
+        ],
+        scope="target",
+    ),
+    JobSpec(
+        "metadata_per_token",
+        "[扫源] 文档元数据 → 按 token 分表",
+        "bitable_meta",
+        "扫源清单 --all-assigned --mode per-token（三人并行常用）",
+        [
+            sys.executable,
+            "-m",
+            "tools.export_doc_metadata_bitable",
+            "--scope",
+            "scan",
+            "--all-assigned",
+            "--mode",
+            "per-token",
+        ],
+        scope="scan",
+    ),
+    JobSpec(
+        "metadata_dry",
+        "文档元数据（试跑 · 最多 20 篇 · 不写飞书）",
+        "bitable_meta",
+        "TARGET aggregated dry-run",
+        [
+            sys.executable,
+            "-m",
+            "tools.export_doc_metadata_bitable",
+            "--scope",
+            "target",
+            "--mode",
+            "aggregated",
+            "--dry-run",
+            "--max-documents",
+            "20",
+        ],
+        scope="target",
+        dry_run=True,
+    ),
+    # --- bitable_title ---
+    JobSpec(
+        "display_title_agg",
+        "归纳新标题 → 写入汇总表（TARGET，不改 wiki 原标题）",
+        "bitable_title",
+        "日期-型号或路径-作用 + Wiki 链接",
+        [
+            sys.executable,
+            "-m",
+            "tools.export_display_title_bitable",
+            "--scope",
+            "target",
+        ],
+        scope="target",
+    ),
+    JobSpec(
+        "display_title_dry",
+        "归纳新标题（试跑 · 最多 20 篇 · 不写飞书）",
+        "bitable_title",
+        "不改 wiki 原标题",
+        [
+            sys.executable,
+            "-m",
+            "tools.export_display_title_bitable",
+            "--scope",
+            "target",
+            "--dry-run",
+            "--max-documents",
+            "20",
+        ],
+        scope="target",
+        dry_run=True,
+    ),
+    # --- ops ---
+    JobSpec(
         "reclassify_others",
-        "Others 纠偏 move",
-        "tools",
+        "Others 产品线纠偏",
+        "ops",
         "tools.reclassify_others_move",
         [sys.executable, "-m", "tools.reclassify_others_move"],
     ),
     JobSpec(
         "others_theme",
         "Others 主题归档",
-        "tools",
+        "ops",
         "tools.others_theme_classify_move",
         [sys.executable, "-m", "tools.others_theme_classify_move"],
     ),
     JobSpec(
         "retry_attachments",
         "附件提取失败重试",
-        "tools",
+        "ops",
         "tools.retry_attachment_extract",
         [sys.executable, "-m", "tools.retry_attachment_extract"],
     ),
@@ -221,6 +262,10 @@ class JobManager:
                 "title": j.title,
                 "category": j.category,
                 "description": j.description,
+                "scope": j.scope,
+                "dry_run": j.dry_run,
+                "danger": j.danger,
+                "needs_folder": j.needs_folder,
             }
             for j in JOB_CATALOG
         ]
@@ -270,7 +315,7 @@ class JobManager:
                     "--mode",
                     "per-token",
                 ]
-                title = f"元数据分表 --folder {folder_id}"
+                title = f"[扫源] 元数据分表 --folder {folder_id}"
             else:
                 raise ValueError(f"未知任务: {job_id}")
         else:

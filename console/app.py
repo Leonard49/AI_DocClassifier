@@ -26,7 +26,7 @@ from console.env_io import (  # noqa: E402
     schema_for_api,
     write_env_updates,
 )
-from console.jobs import JOB_MANAGER  # noqa: E402
+from console.jobs import JOB_CATEGORY_META, JOB_MANAGER  # noqa: E402
 from state.scan_folders import (  # noqa: E402
     default_scan_folders_path,
     load_scan_folders,
@@ -201,23 +201,30 @@ def put_folders(body: FoldersSaveRequest):
 @app.get("/api/jobs/catalog")
 def jobs_catalog():
     return {
+        "categories": JOB_CATEGORY_META,
         "jobs": JOB_MANAGER.catalog()
         + [
             {
                 "id": "classify_folder",
                 "title": "分类复制（指定 folder id）",
-                "category": "classify",
-                "description": "需要 folder_id",
+                "category": "core",
+                "description": "请先在下方选择 folder id",
+                "scope": "scan",
+                "dry_run": False,
+                "danger": False,
                 "needs_folder": True,
             },
             {
                 "id": "metadata_folder",
-                "title": "元数据分表（指定 folder id）",
-                "category": "metadata",
-                "description": "需要 folder_id",
+                "title": "[扫源] 元数据分表（指定 folder id）",
+                "category": "bitable_meta",
+                "description": "请先在下方选择 folder id · per-token",
+                "scope": "scan",
+                "dry_run": False,
+                "danger": False,
                 "needs_folder": True,
             },
-        ]
+        ],
     }
 
 
@@ -252,7 +259,14 @@ def jobs_logs(offset: int = 0):
 
 @app.get("/")
 def index():
-    return FileResponse(os.path.join(STATIC_DIR, "index.html"))
+    return FileResponse(
+        os.path.join(STATIC_DIR, "index.html"),
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

@@ -4,10 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>AI DocClassifier Console</title>
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css" />
+  <link rel="stylesheet" href="/static/app.css?v=20260807d" />
 </head>
 <body>
   <div class="bg-grid" aria-hidden="true"></div>
@@ -16,7 +18,7 @@
       <div class="mark" aria-hidden="true"></div>
       <div>
         <h1>AI DocClassifier</h1>
-        <p class="tagline">本地控制台 · 配置 · 分类 · 元数据</p>
+        <p class="tagline">本地控制台 · 分类 · 元数据表 · 归纳新标题</p>
       </div>
     </div>
     <div class="status-chips" id="statusChips"></div>
@@ -36,10 +38,11 @@
           <p class="hint">一次只跑一个任务。日志实时刷在右侧。</p>
           <div class="job-filters">
             <button class="chip active" data-cat="all">全部</button>
-            <button class="chip" data-cat="classify">分类</button>
-            <button class="chip" data-cat="metadata">元数据表</button>
-            <button class="chip" data-cat="titles">归纳新标题</button>
-            <button class="chip" data-cat="tools">工具</button>
+            <button class="chip" data-cat="core">主流程</button>
+            <button class="chip" data-cat="enrich">副本增强</button>
+            <button class="chip" data-cat="bitable_meta">文档元数据表</button>
+            <button class="chip" data-cat="bitable_title">归纳新标题</button>
+            <button class="chip" data-cat="ops">运维纠偏</button>
           </div>
           <div id="jobList" class="job-list"></div>
           <div class="folder-pick">
@@ -70,12 +73,12 @@
           </div>
           <div class="row-actions">
             <label class="check"><input type="checkbox" id="revealSecrets" /> 显示密钥</label>
-            <button id="btnReloadConfig" class="btn ghost">重新加载</button>
-            <button id="btnSaveConfig" class="btn primary">保存</button>
+            <button type="button" id="btnReloadConfig" class="btn ghost">重新加载</button>
+            <button type="button" id="btnSaveConfig" class="btn primary">保存</button>
           </div>
         </div>
-        <div id="configForm" class="config-form"></div>
         <p id="configMsg" class="msg" hidden></p>
+        <div id="configForm" class="config-form"></div>
       </div>
     </section>
 
@@ -116,6 +119,6 @@
   <footer class="foot">
     仅监听本机 127.0.0.1 · 关闭本窗口不会停止已启动的任务，请用「停止任务」
   </footer>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=20260807d"></script>
 </body>
 </html>
