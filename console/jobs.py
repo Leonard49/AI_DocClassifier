@@ -28,11 +28,16 @@ class JobSpec:
     dry_run: bool = False
     danger: bool = False
     needs_folder: bool = False
+    env_overrides: Dict[str, str] = field(default_factory=dict)
 
 
 # Filter chip order for console "全部" grouping
 JOB_CATEGORY_META: List[Dict[str, str]] = [
-    {"id": "core", "label": "主流程", "hint": "扫描源目录 → 分类复制到 TARGET"},
+    {
+        "id": "core",
+        "label": "主流程",
+        "hint": "日常点「增量更新」；只有要强制重扫源目录时才点「全量重扫」",
+    },
     {"id": "enrich", "label": "副本增强", "hint": "只处理 TARGET 已复制文档（贴表 / 附件分隔）"},
     {
         "id": "bitable_meta",
@@ -54,25 +59,45 @@ JOB_CATALOG: List[JobSpec] = [
         "list_folders",
         "列出清单分工",
         "core",
-        "python main.py --list-folders",
+        "先看清 assignee / enabled，再决定跑哪些夹",
         [sys.executable, "main.py", "--list-folders"],
     ),
     JobSpec(
         "classify_assigned",
-        "分类复制（我的文件夹）",
+        "【增量更新】分类复制 · 我的文件夹",
         "core",
-        "python main.py --all-assigned（assignee == WORKER_ID）",
+        "日常首选：快照跳过已成功叶子；共享库已 copied 的不重复复制",
         [sys.executable, "main.py", "--all-assigned"],
         scope="scan",
     ),
     JobSpec(
-        "classify_all_enabled",
-        "分类复制（清单全部 enabled）",
+        "classify_assigned_full",
+        "【全量重扫】分类复制 · 我的文件夹",
         "core",
-        "会跑清单内全部 enabled，慎用",
+        "FORCE_RESCAN：忽略本机断点并全量校准扫描；已 copied 的仍跳过复制",
+        [sys.executable, "main.py", "--all-assigned"],
+        scope="scan",
+        danger=True,
+        env_overrides={"FORCE_RESCAN": "true"},
+    ),
+    JobSpec(
+        "classify_all_enabled",
+        "【增量更新】分类复制 · 清单全部 enabled",
+        "core",
+        "会跑清单内全部 enabled 文件夹，慎用（仍走增量跳过逻辑）",
         [sys.executable, "main.py", "--all-enabled"],
         scope="scan",
         danger=True,
+    ),
+    JobSpec(
+        "classify_all_enabled_full",
+        "【全量重扫】分类复制 · 清单全部 enabled",
+        "core",
+        "FORCE_RESCAN + 全部 enabled，慎用",
+        [sys.executable, "main.py", "--all-enabled"],
+        scope="scan",
+        danger=True,
+        env_overrides={"FORCE_RESCAN": "true"},
     ),
     # --- enrich ---
     JobSpec(
@@ -266,6 +291,7 @@ class JobManager:
                 "dry_run": j.dry_run,
                 "danger": j.danger,
                 "needs_folder": j.needs_folder,
+                "force_rescan": bool(j.env_overrides.get("FORCE_RESCAN")),
             }
             for j in JOB_CATALOG
         ]
@@ -297,12 +323,19 @@ class JobManager:
         folder_id: Optional[str] = None,
     ) -> dict:
         spec = next((j for j in JOB_CATALOG if j.id == job_id), None)
+        env_overrides: Dict[str, str] = {}
         if not spec:
             if job_id == "classify_folder":
                 if not folder_id:
                     raise ValueError("classify_folder 需要 folder_id")
                 argv = [sys.executable, "main.py", "--folder", folder_id]
-                title = f"分类复制 --folder {folder_id}"
+                title = f"【增量更新】分类复制 --folder {folder_id}"
+            elif job_id == "classify_folder_full":
+                if not folder_id:
+                    raise ValueError("classify_folder_full 需要 folder_id")
+                argv = [sys.executable, "main.py", "--folder", folder_id]
+                title = f"【全量重扫】分类复制 --folder {folder_id}"
+                env_overrides = {"FORCE_RESCAN": "true"}
             elif job_id == "metadata_folder":
                 if not folder_id:
                     raise ValueError("metadata_folder 需要 folder_id")
@@ -321,6 +354,7 @@ class JobManager:
         else:
             argv = list(spec.argv)
             title = spec.title
+            env_overrides = dict(spec.env_overrides or {})
 
         if extra_args:
             argv.extend(extra_args)
@@ -335,6 +369,7 @@ class JobManager:
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
         env["PYTHONIOENCODING"] = "utf-8"
+        env.update(env_overrides)
 
         creationflags = 0
         if sys.platform == "win32":
@@ -354,6 +389,9 @@ class JobManager:
         )
         state.proc = proc
         state.logs.append(f"$ {' '.join(argv)}\n")
+        if env_overrides:
+            ov = " ".join(f"{k}={v}" for k, v in sorted(env_overrides.items()))
+            state.logs.append(f"# env overrides: {ov}\n")
 
         t = threading.Thread(target=self._pump, args=(state,), daemon=True)
         t.start()

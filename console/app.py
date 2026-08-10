@@ -206,13 +206,25 @@ def jobs_catalog():
         + [
             {
                 "id": "classify_folder",
-                "title": "分类复制（指定 folder id）",
+                "title": "【增量更新】分类复制 · 指定 folder",
                 "category": "core",
-                "description": "请先在下方选择 folder id",
+                "description": "请先在下方选择 folder id · 日常增量",
                 "scope": "scan",
                 "dry_run": False,
                 "danger": False,
                 "needs_folder": True,
+                "force_rescan": False,
+            },
+            {
+                "id": "classify_folder_full",
+                "title": "【全量重扫】分类复制 · 指定 folder",
+                "category": "core",
+                "description": "请先选 folder · FORCE_RESCAN；已 copied 仍跳过复制",
+                "scope": "scan",
+                "dry_run": False,
+                "danger": True,
+                "needs_folder": True,
+                "force_rescan": True,
             },
             {
                 "id": "metadata_folder",
@@ -223,6 +235,7 @@ def jobs_catalog():
                 "dry_run": False,
                 "danger": False,
                 "needs_folder": True,
+                "force_rescan": False,
             },
         ],
     }

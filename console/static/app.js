@@ -88,7 +88,11 @@
 
   // Jobs
   const CATEGORY_FALLBACK = [
-    { id: "core", label: "主流程", hint: "扫描源目录 → 分类复制到 TARGET" },
+    {
+      id: "core",
+      label: "主流程",
+      hint: "日常点「增量更新」；只有要强制重扫源目录时才点「全量重扫」",
+    },
     { id: "enrich", label: "副本增强", hint: "只处理 TARGET 已复制文档" },
     { id: "bitable_meta", label: "文档元数据表", hint: "文档元数据 → 飞书多维表格" },
     { id: "bitable_title", label: "归纳新标题", hint: "TARGET，不改 wiki 原标题" },
@@ -104,10 +108,14 @@
 
   function jobBadges(j) {
     const tags = [];
+    if (j.force_rescan) tags.push('<span class="tag tag-danger">全量重扫</span>');
+    else if (j.category === "core" && String(j.id || "").startsWith("classify")) {
+      tags.push('<span class="tag tag-target">增量更新</span>');
+    }
     if (j.scope === "target") tags.push('<span class="tag tag-target">TARGET</span>');
     if (j.scope === "scan") tags.push('<span class="tag tag-scan">扫源</span>');
     if (j.dry_run) tags.push('<span class="tag tag-dry">试跑</span>');
-    if (j.danger) tags.push('<span class="tag tag-danger">慎用</span>');
+    if (j.danger && !j.force_rescan) tags.push('<span class="tag tag-danger">慎用</span>');
     if (j.needs_folder) tags.push('<span class="tag tag-folder">需选 folder</span>');
     return tags.join("");
   }

@@ -197,8 +197,21 @@ select, input[type="text"], input[type="number"], textarea {
 }
 textarea { resize: vertical; font-family: var(--mono); font-size: 0.85rem; }
 
-.log-card { min-height: 70vh; display: flex; flex-direction: column; }
-.log-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.6rem; }
+.log-card {
+  height: min(75vh, 820px);
+  max-height: 75vh;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.log-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.6rem;
+  flex: 0 0 auto;
+}
 .badge {
   font-family: var(--mono); font-size: 0.75rem;
   padding: 0.25rem 0.55rem; border-radius: 999px;
@@ -209,10 +222,19 @@ textarea { resize: vertical; font-family: var(--mono); font-size: 0.85rem; }
 .badge.failed, .badge.stopped { color: var(--danger); border-color: rgba(224,107,92,0.5); }
 
 .log {
-  flex: 1; margin: 0; overflow: auto;
-  background: #070b0a; border: 1px solid var(--line); border-radius: 12px;
-  padding: 0.85rem 1rem; font-family: var(--mono); font-size: 0.78rem;
-  white-space: pre-wrap; word-break: break-word; min-height: 420px;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: #070b0a;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.85rem 1rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  word-break: break-word;
   color: #c9ddd5;
 }
 
