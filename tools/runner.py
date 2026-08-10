@@ -24,6 +24,7 @@ from tools._tool_scope import (
     resolve_scope,
     resolve_skip_existing,
 )
+from util.run_logging import setup_run_log
 
 
 def ensure_utf8_stdio() -> None:
@@ -34,6 +35,16 @@ def ensure_utf8_stdio() -> None:
             stream.reconfigure(encoding="utf-8")
         except Exception:
             pass
+
+
+def maybe_setup_run_log() -> Optional[Dict[str, str]]:
+    """Mirror stdout/stderr to logs/latest.log when SAVE_RUN_LOG is on (same as main.py)."""
+    if not getattr(config, "SAVE_RUN_LOG", True):
+        return None
+    log_dir = getattr(config, "LOG_DIR", None) or "logs"
+    paths = setup_run_log(log_dir)
+    print(f"📝 运行日志: {paths.get('latest')}")
+    return paths
 
 
 def add_scope_args(parser: argparse.ArgumentParser) -> None:
@@ -122,6 +133,7 @@ class ToolJob:
         banner_extra: str = "",
     ) -> ToolJobContext:
         self.validate(require_llm=require_llm)
+        maybe_setup_run_log()
         scope = resolve_scope(getattr(args, "scope", None))
         skip_existing = resolve_skip_existing(
             flag_skip=bool(getattr(args, "skip_existing", False)),
@@ -197,5 +209,6 @@ __all__ = [
     "ToolJobContext",
     "add_scope_args",
     "ensure_utf8_stdio",
+    "maybe_setup_run_log",
     "write_tool_report",
 ]

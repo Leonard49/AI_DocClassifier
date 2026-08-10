@@ -270,8 +270,14 @@ class JobState:
     started_at: float = field(default_factory=time.time)
     finished_at: Optional[float] = None
     exit_code: Optional[int] = None
-    logs: Deque[str] = field(default_factory=lambda: deque(maxlen=8000))
+    # Ring buffer of recent lines; log_seq is absolute line count ever appended.
+    logs: Deque[str] = field(default_factory=lambda: deque(maxlen=20000))
+    log_seq: int = 0
     proc: Optional[subprocess.Popen] = None
+
+    def append_log(self, line: str) -> None:
+        self.logs.append(line)
+        self.log_seq += 1
 
 
 class JobManager:
@@ -311,7 +317,7 @@ class JobManager:
                     "started_at": cur.started_at,
                     "finished_at": cur.finished_at,
                     "exit_code": cur.exit_code,
-                    "log_lines": len(cur.logs),
+                    "log_lines": cur.log_seq,
                 },
             }
 
@@ -388,10 +394,10 @@ class JobManager:
             creationflags=creationflags,
         )
         state.proc = proc
-        state.logs.append(f"$ {' '.join(argv)}\n")
+        state.append_log(f"$ {' '.join(argv)}\n")
         if env_overrides:
             ov = " ".join(f"{k}={v}" for k, v in sorted(env_overrides.items()))
-            state.logs.append(f"# env overrides: {ov}\n")
+            state.append_log(f"# env overrides: {ov}\n")
 
         t = threading.Thread(target=self._pump, args=(state,), daemon=True)
         t.start()
@@ -402,12 +408,12 @@ class JobManager:
         try:
             assert state.proc.stdout is not None
             for line in state.proc.stdout:
-                state.logs.append(line)
+                state.append_log(line)
             code = state.proc.wait()
             state.exit_code = code
             state.status = "succeeded" if code == 0 else "failed"
         except Exception as exc:
-            state.logs.append(f"\n[console] pump error: {exc}\n")
+            state.append_log(f"\n[console] pump error: {exc}\n")
             state.status = "failed"
             state.exit_code = -1
         finally:
@@ -433,7 +439,7 @@ class JobManager:
                 except subprocess.TimeoutExpired:
                     proc.kill()
         except Exception as exc:
-            cur.logs.append(f"\n[console] stop error: {exc}\n")
+            cur.append_log(f"\n[console] stop error: {exc}\n")
             try:
                 proc.kill()
             except Exception:
@@ -443,19 +449,48 @@ class JobManager:
         return self.status()
 
     def logs_since(self, offset: int = 0) -> dict:
+        """
+        offset is an absolute line sequence (0-based), not an index into the ring buffer.
+
+        When the ring drops old lines, clients whose offset is behind the buffer head
+        receive a truncated notice and continue from the oldest retained line.
+        """
         with self._lock:
             cur = self._current
             if not cur:
-                return {"offset": 0, "lines": [], "status": None}
-            lines = list(cur.logs)
-            chunk = lines[offset:]
+                return {
+                    "offset": 0,
+                    "lines": [],
+                    "status": None,
+                    "truncated": False,
+                    "total": 0,
+                }
+            buf = list(cur.logs)
+            seq = cur.log_seq
+            retained = len(buf)
+            head = seq - retained  # absolute index of buf[0]
+            truncated = False
+            if offset < head:
+                truncated = True
+                notice = (
+                    f"\n[console] 日志缓冲已滚动：跳过前 {head - offset} 行"
+                    f"（仅保留最近 {retained} 行）\n"
+                )
+                chunk = [notice] + buf
+                new_offset = seq
+            else:
+                local = offset - head
+                chunk = buf[local:]
+                new_offset = offset + len(chunk)
             return {
-                "offset": offset + len(chunk),
-                "total": len(lines),
+                "offset": new_offset,
+                "total": seq,
+                "retained": retained,
                 "lines": chunk,
                 "status": cur.status,
                 "run_id": cur.run_id,
                 "exit_code": cur.exit_code,
+                "truncated": truncated,
             }
 
 

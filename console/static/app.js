@@ -207,9 +207,11 @@
 
   async function pollLogs() {
     const data = await api(`/api/jobs/logs?offset=${logOffset}`);
+    if (typeof data.offset === "number") {
+      logOffset = data.offset;
+    }
     if (data.lines && data.lines.length) {
       $("#logView").textContent += data.lines.join("");
-      logOffset = data.offset;
       const pre = $("#logView");
       pre.scrollTop = pre.scrollHeight;
     }

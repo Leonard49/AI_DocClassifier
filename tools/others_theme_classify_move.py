@@ -228,12 +228,10 @@ def classify_one(
 
 
 def main() -> int:
-    if sys.platform == "win32":
-        for stream in (sys.stdout, sys.stderr):
-            try:
-                stream.reconfigure(encoding="utf-8")
-            except Exception:
-                pass
+    from tools.runner import ensure_utf8_stdio, maybe_setup_run_log
+
+    ensure_utf8_stdio()
+    maybe_setup_run_log()
 
     args = _parse_args()
     config.validate()

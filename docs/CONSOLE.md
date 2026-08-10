@@ -170,6 +170,7 @@ python -m tools.enrich_copied_docs
 |------|------|
 | 控制台右侧「输出」 | 当前任务实时日志 |
 | `logs/` | `main` / 工具的运行与报告 JSON |
+| `logs/latest.log` | 最近一次运行完整终端日志（`SAVE_RUN_LOG=true`；主流程与各 tools 均写入） |
 | `logs/doc_metadata_bitable.json` | 最近一次元数据导出报告 |
 | 飞书 TARGET 目录 | 分类结果、贴表文档、多维表格 |
 

@@ -20,9 +20,12 @@ from attachment.extractor import (
     save_attachment_report,
 )
 from feishu.token_manager import TokenManager
+from tools.runner import ensure_utf8_stdio, maybe_setup_run_log
 
 
 def main() -> int:
+    ensure_utf8_stdio()
+    maybe_setup_run_log()
     parser = argparse.ArgumentParser(description="重试失败的附件提取")
     parser.add_argument(
         "--report",

@@ -227,6 +227,18 @@ def main() -> int:
             f"skipped={counts.get('skipped', 0)} "
             f"failed={counts.get('failed', 0)} | {elapsed:.1f}s"
         )
+        job.finish_report(
+            ctx,
+            "enrich_copied_docs.json",
+            {
+                "dry_run": False,
+                "ops": planned,
+                "docs_total": len(docs) + ctx.ledger_skipped,
+                "docs_processed": len(docs),
+                "counts": counts,
+                "elapsed_seconds": round(elapsed, 2),
+            },
+        )
         return 1 if counts.get("failed", 0) else 0
     finally:
         ctx.close()
