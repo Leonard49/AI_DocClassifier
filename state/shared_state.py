@@ -115,13 +115,26 @@ class SharedCopyState:
                     target_parent_token TEXT,
                     target_folder_token TEXT,
                     scan_root TEXT,
+                    source_path TEXT,
                     worker_id TEXT,
                     updated_at TEXT NOT NULL
                 )
                 """
             )
+            cols = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(copy_registry)").fetchall()
+            }
+            if "source_path" not in cols:
+                conn.execute(
+                    "ALTER TABLE copy_registry ADD COLUMN source_path TEXT"
+                )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_copy_status ON copy_registry(status)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_copy_copied_node "
+                "ON copy_registry(copied_node_token)"
             )
             conn.commit()
 
@@ -217,6 +230,7 @@ class SharedCopyState:
         target_parent_token: str,
         target_folder_token: str,
         scan_root: Optional[str],
+        source_path: str = "",
     ) -> bool:
         now = datetime.now().isoformat()
 
@@ -226,8 +240,9 @@ class SharedCopyState:
                 INSERT INTO copy_registry (
                     obj_token, status, title, source_node_token,
                     copied_node_token, target_parent_token,
-                    target_folder_token, scan_root, worker_id, updated_at
-                ) VALUES (?, 'copied', ?, ?, ?, ?, ?, ?, ?, ?)
+                    target_folder_token, scan_root, source_path,
+                    worker_id, updated_at
+                ) VALUES (?, 'copied', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(obj_token) DO UPDATE SET
                     status = 'copied',
                     title = excluded.title,
@@ -236,6 +251,7 @@ class SharedCopyState:
                     target_parent_token = excluded.target_parent_token,
                     target_folder_token = excluded.target_folder_token,
                     scan_root = excluded.scan_root,
+                    source_path = excluded.source_path,
                     worker_id = excluded.worker_id,
                     updated_at = excluded.updated_at
                 """,
@@ -247,6 +263,7 @@ class SharedCopyState:
                     target_parent_token,
                     target_folder_token,
                     scan_root or "",
+                    source_path or "",
                     self.worker_id,
                     now,
                 ),
@@ -303,7 +320,7 @@ class SharedCopyState:
             sql = """
                 SELECT obj_token, title, source_node_token, copied_node_token,
                        target_parent_token, target_folder_token, scan_root,
-                       worker_id, updated_at
+                       source_path, worker_id, updated_at
                 FROM copy_registry
                 WHERE status = 'copied'
             """
@@ -321,3 +338,33 @@ class SharedCopyState:
             return [dict(row) for row in rows]
 
         return self._with_db(_query, [])
+
+    def get_by_copied_node(self, copied_node_token: str) -> Optional[Dict[str, Any]]:
+        token = (copied_node_token or "").strip()
+        if not token:
+            return None
+
+        def _query(conn: sqlite3.Connection) -> Optional[Dict[str, Any]]:
+            row = conn.execute(
+                """
+                SELECT obj_token, title, source_node_token, copied_node_token,
+                       target_parent_token, target_folder_token, scan_root,
+                       source_path, worker_id, updated_at
+                FROM copy_registry
+                WHERE status = 'copied' AND copied_node_token = ?
+                LIMIT 1
+                """,
+                (token,),
+            ).fetchone()
+            return dict(row) if row else None
+
+        return self._with_db(_query, None)
+
+    def index_by_copied_node(self) -> Dict[str, Dict[str, Any]]:
+        """Map copied_node_token → registry row (for TARGET backfill join)."""
+        out: Dict[str, Dict[str, Any]] = {}
+        for row in self.list_copied(require_copied_node=True):
+            key = (row.get("copied_node_token") or "").strip()
+            if key:
+                out[key] = row
+        return out

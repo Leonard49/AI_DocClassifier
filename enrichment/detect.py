@@ -115,6 +115,55 @@ def has_metadata_table(blocks: List[Dict[str, Any]]) -> bool:
     return False
 
 
+def metadata_root_span(
+    root_children: List[Dict[str, Any]],
+) -> Optional[Tuple[int, int]]:
+    """
+    Return [start, end) indices among root children covering the metadata
+    heading and the following table block (if present).
+    """
+    for i, block in enumerate(root_children):
+        if _heading_text(block) != METADATA_HEADING_TITLE:
+            continue
+        end = i + 1
+        if end < len(root_children):
+            nxt = root_children[end]
+            # 31 = table in Feishu Docx block_type enum
+            if int(nxt.get("block_type") or 0) == 31:
+                end += 1
+        return i, end
+    return None
+
+
+def batch_delete_root_children(
+    tm: TokenManager,
+    document_id: str,
+    *,
+    start_index: int,
+    end_index: int,
+) -> Tuple[bool, str]:
+    if end_index <= start_index:
+        return True, "empty"
+    url = (
+        f"https://open.feishu.cn/open-apis/docx/v1/documents/"
+        f"{document_id}/blocks/{document_id}/children/batch_delete"
+        "?document_revision_id=-1"
+    )
+    resp = feishu_request(
+        "DELETE",
+        url,
+        headers=_headers(tm),
+        json={"start_index": start_index, "end_index": end_index},
+    )
+    try:
+        data = resp.json()
+    except Exception:
+        return False, f"HTTP {resp.status_code}"
+    if data.get("code") == 0:
+        return True, "ok"
+    return False, f"code={data.get('code')} msg={data.get('msg')}"
+
+
 def has_attachment_section(blocks: List[Dict[str, Any]]) -> bool:
     for block in blocks:
         if _heading_text(block).startswith(ATTACHMENT_SECTION_PREFIX):

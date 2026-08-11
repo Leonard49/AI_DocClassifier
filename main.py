@@ -1442,6 +1442,7 @@ def _run_pipeline(folder: Optional[ScanFolder] = None):
                     target_parent_token=target_root_token or "",
                     target_folder_token="",
                     scan_root=SCAN_ROOT_TOKEN,
+                    source_path=source_path or representative.get("source_path") or "",
                 ):
                     print(
                         "⚠️ 共享去重库写入失败（文档已复制成功，"

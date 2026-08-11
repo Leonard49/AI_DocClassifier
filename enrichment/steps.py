@@ -8,12 +8,14 @@ from typing import Optional
 from classify.doc_metadata import classify_doc_type_by_rules, extract_doc_metadata
 from enrichment.base import EnrichmentContext, StepResult
 from enrichment.detect import (
+    batch_delete_root_children,
     first_attachment_heading_index,
     has_attachment_section,
     has_metadata_table,
     insert_children_at,
     list_all_blocks,
     list_root_children,
+    metadata_root_span,
     resolve_docx_id,
 )
 from enrichment.markers import attachment_section_blocks
@@ -43,16 +45,32 @@ class MetadataTableStep:
             return StepResult(self.id, "skipped", "not a docx / resolve failed")
 
         blocks = list_all_blocks(self.tm, doc_id)
+        force = bool((ctx.extras or {}).get("force_metadata"))
         if has_metadata_table(blocks):
-            return StepResult(self.id, "skipped", "already present")
+            if not force:
+                return StepResult(self.id, "skipped", "already present")
+            root = list_root_children(self.tm, doc_id)
+            span = metadata_root_span(root)
+            if not span:
+                return StepResult(self.id, "failed", "force: metadata span not found")
+            ok_del, msg = batch_delete_root_children(
+                self.tm, doc_id, start_index=span[0], end_index=span[1]
+            )
+            if not ok_del:
+                return StepResult(self.id, "failed", f"force delete failed: {msg}")
 
         tag = ctx.tag
+        source_path = ctx.source_path or ""
+        source_folder = ""
+        if source_path:
+            source_folder = source_path.split(" / ")[0].strip()
         meta = extract_doc_metadata(
             title=ctx.title or "",
             content=ctx.content or "",
             obj_token=ctx.obj_token or "",
             node_token=ctx.source_node_token or ctx.target_node_token,
-            source_path=ctx.source_path or "",
+            source_folder=source_folder,
+            source_path=source_path,
             author=ctx.author or "",
             doc_type=classify_doc_type_by_rules(ctx.title or "", ctx.content or ""),
             tag=tag,

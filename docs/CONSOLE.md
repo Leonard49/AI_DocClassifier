@@ -82,7 +82,8 @@ notepad .env
 | 主流程 | **【全量重扫】分类复制 · 我的文件夹** | `FORCE_RESCAN`：强制全量扫描校准；已 copied 仍跳过复制 |
 | 主流程 | 【增量/全量】指定 folder | 先在下方下拉框选 id |
 | 主流程 | 【增量/全量】清单全部 enabled | **慎用** |
-| 副本增强 | 回填正式 / 试跑 | TARGET：贴元数据表 + 附件分隔 |
+| 副本增强 | 回填正式 / 试跑 | TARGET：贴元数据表 + 附件分隔（作者/源路径取自源文档） |
+| 副本增强 | **强制重贴元数据表** | 删除错误旧表后重贴；需 `SHARED_STATE_DB` |
 | 文档元数据表 | 汇总 / 汇总+分表（TARGET） | 写文档元数据多维表格 |
 | 文档元数据表 | **[扫源] 按 token 分表** | 三人并行常用；扫源清单 |
 | 文档元数据表 | 试跑 20 篇 | 不写表 |
@@ -101,7 +102,11 @@ notepad .env
 ```bash
 python -m tools.enrich_copied_docs --dry-run --limit 20
 python -m tools.enrich_copied_docs
+# 修正错误的作者/源路径（先删旧表再贴）：
+python -m tools.enrich_copied_docs --force-metadata --steps metadata_table
 ```
+
+回填时作者取源文档 `creator`，源路径取 SCAN 目录 breadcrumb（经 `SHARED_STATE_DB` 的 `copied_node → source_node` 映射）；**不要**用知识枢纽 TARGET 路径。
 
 ### 3.2 配置
 

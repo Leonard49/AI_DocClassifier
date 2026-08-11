@@ -104,7 +104,7 @@ JOB_CATALOG: List[JobSpec] = [
         "enrich_backfill",
         "副本增强回填（正式）",
         "enrich",
-        "TARGET：贴元数据表 + 附件分隔符",
+        "TARGET：贴元数据表 + 附件分隔符（作者/源路径取自源文档）",
         [
             sys.executable,
             "-m",
@@ -113,6 +113,24 @@ JOB_CATALOG: List[JobSpec] = [
             "target",
         ],
         scope="target",
+    ),
+    JobSpec(
+        "enrich_backfill_force_meta",
+        "副本增强 · 强制重贴元数据表",
+        "enrich",
+        "删除错误旧表后重贴（修正作者/源路径）；需 SHARED_STATE_DB",
+        [
+            sys.executable,
+            "-m",
+            "tools.enrich_copied_docs",
+            "--scope",
+            "target",
+            "--force-metadata",
+            "--steps",
+            "metadata_table",
+        ],
+        scope="target",
+        danger=True,
     ),
     JobSpec(
         "enrich_backfill_dry",
