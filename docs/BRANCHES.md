@@ -133,6 +133,24 @@
 
 ---
 
+## `feature/doc-metadata-bitable`
+
+**基于：** `feature/scan-folders-batch`
+
+**方案：** 独立侧工具把文档元数据写入飞书多维表格（与 inline-table 互为替代/可并存）。后续已合入 `feature/console-ui` 任务列表。
+
+**主要变化：**
+
+| 能力 | 说明 |
+|------|------|
+| 多维表格导出 | `tools/export_doc_metadata_bitable.py`：汇总表 / 按 token 分表 / both |
+| 三人并行 | 常用 per-token 分表，避免同时写同一汇总表 |
+| 跳过已写 | ledger / 索引记录 `record_id`（后续收敛进 `tool_ops.db`） |
+
+**关联文件：** `tools/export_doc_metadata_bitable.py`、`state/metadata_bitable.py`、`feishu/bitable.py`
+
+---
+
 ## `feature/console-ui`（可视化控制台）
 
 **基于：** `feature/doc-metadata-inline-table`（并合入多维表格导出工具）
@@ -149,6 +167,23 @@
 **使用说明：** [docs/CONSOLE.md](CONSOLE.md)
 
 **关联文件：** `console/`、`run_console.py`、`启动控制台.bat`
+
+---
+
+## `feature/doc-enrichment`（文档增强管道）
+
+**基于：** `feature/console-ui`
+
+**主要变化：**
+
+| 能力 | 说明 |
+|------|------|
+| enrichment 插件 | `enrichment/`：复制后 / 回填可插拔步骤 |
+| 默认步骤 | 贴元数据表、附件分隔符（均幂等） |
+| 旧副本回填 | `tools/enrich_copied_docs.py`（默认 TARGET） |
+| 开关 | `ENABLE_METADATA_TABLE` / `ENABLE_ATTACHMENT_SEPARATOR` |
+
+**关联文件：** `enrichment/`、`tools/enrich_copied_docs.py`、`main.py`（`enrich_after_copy`）
 
 ---
 
@@ -192,10 +227,18 @@
 
 ```
 master
-  └── … → feature/console-ui
-              └── feature/doc-enrichment
-                    └── feature/tool-ops-target-scope
-                          └── feature/arch-data-dir-cleanup  ← 当前推荐
+  └── feature/multi-worker-parallel
+        └── feature/scan-snapshot-plan-b
+              └── feature/attachment-extract
+                    └── feature/classify-quality-restructure
+                          └── feature/scan-folders-batch
+                                ├── feature/doc-metadata-bitable          （独立多维表格工具，与贴表方案并行）
+                                └── feature/doc-metadata-inline-table     （复制后贴「文档元数据」表）
+                                      └── feature/console-ui              （可视化控制台；并合入 bitable 导出）
+                                            └── feature/doc-enrichment    （enrichment 插件 + 旧副本回填）
+                                                  └── feature/tool-ops-target-scope   （工具默认 TARGET + tool_ops 账本）
+                                                        └── feature/arch-data-dir-cleanup  ← 当前推荐
+                                                              （data/ 布局 + 账本收敛 + 控制台增量/全量）
 ```
 
 ## 选用建议
