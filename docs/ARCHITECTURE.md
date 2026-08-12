@@ -66,10 +66,10 @@ Core **不**负责：汇总多维表格、归纳新标题表、对历史副本�
 
 | 工具 | op | 效果 |
 |------|-----|------|
-| `enrich_copied_docs` | `metadata_table` / `attachment_separator` | 回填旧副本正文 |
+| `enrich_copied_docs` | `metadata_table` / `attachment_separator` | 回填旧副本；作者/源路径←SCAN，分类路径←TARGET |
 | `export_doc_metadata_bitable` | `metadata_bitable` | 文档元数据 → 多维表格 |
 | `export_display_title_bitable` | `display_title_bitable` | **归纳新标题** → 多维表格（不改 wiki 标题） |
-| `rename_target_display_titles` | `display_title_rename` | 按展示标题格式重命名 TARGET |
+| `rename_target_display_titles` | `display_title_rename` | 按 **主题-产品线-作者** 重命名 TARGET |
 | `refresh_target_from_source` | `target_content_refresh` | 源 → TARGET 单向重拷（保留标题；旧副本进废弃夹） |
 
 同一文档上各 op **互不影响**：例如元数据表已 done，仍可跑归纳新标题。
@@ -100,6 +100,16 @@ Tools **不会**因为 `shared_copy_state` 里有记录就跳过；只看自己�
 | 时机 | 每篇**刚复制成功** | 事后批量 |
 | 对象 | 本次新副本 | TARGET 下（默认）全部/待处理叶子 |
 | 账本 | 可不写 / 或与回填共用 op 语义 | 写入 `tool_ops` |
+| 分类路径 | 来自本次 `tag` | 无 tag → 用 TARGET 面包屑 `target_path` |
+| 作者 / 源路径 | 源节点 + SCAN breadcrumb | 经 `SHARED_STATE_DB` 还原源节点后再取 |
+
+强制重贴：`--force-metadata`（先删旧「文档元数据」再写）。
+
+### 3.6 源与 TARGET：不同步，按需单向刷新
+
+SCAN 与 TARGET 是**独立副本**，整理侧改标题/贴表不会回写源；源改正文也不会自动进枢纽。
+
+需要跟进源变更时用 `refresh_target_from_source`（控制台「运维纠偏」）：重拷 → 保留当前 TARGET 标题 → 旧节点移入 `_已废弃_源刷新` → 更新共享库映射 → 可选 enrichment。配置：`REFRESH_TARGET_SKIP_UNCHANGED`、`REFRESH_TARGET_OBSOLETE_FOLDER`。
 
 ---
 
@@ -108,9 +118,9 @@ Tools **不会**因为 `shared_copy_state` 里有记录就跳过；只看自己�
 | 项 | 内容 |
 |----|------|
 | 背景 | 多个 `*_index.db`、导出工具样板重复、根目录 `.db` 噪声 |
-| 做了 | `DATA_DIR`；索引收敛进 `tool_ops`；`ToolJob`；文档标明 shim |
-| 没做 | 不拆 `main.py`；不搬 UNC 共享库 |
-| 提交 | `d19d7c1` …；文档/控制台文案 `1a3c77a` … |
+| 做了 | `DATA_DIR`；索引收敛进 `tool_ops`；`ToolJob`；展示标题重命名；源→TARGET 刷新；贴表作者/双路径纠偏 |
+| 没做 | 不拆 `main.py`；不搬 UNC 共享库；不做 SCAN↔TARGET 双向同步 |
+| 提交 | 见分支 `git log`；文档随功能迭代 |
 
 上一跳：`feature/tool-ops-target-scope`（工具默认 TARGET + 统一账本）。详见 [BRANCHES.md](BRANCHES.md)。
 
@@ -139,6 +149,6 @@ logs/
 | 副本增强 | Tools | `enrich_copied_docs`（正式 / 试跑 / 强制重贴元数据） |
 | 文档元数据表 | Tools | `export_doc_metadata_bitable`（TARGET 或 `[扫源]`） |
 | **归纳新标题** | Tools | `export_display_title_bitable`（不改 wiki）/ `rename_target_display_titles`（只改 TARGET） |
-| 运维纠偏 | Tools | 源→TARGET 内容刷新 / Others 纠偏 / 主题归档 / 附件重试 |
+| 运维纠偏 | Tools | `refresh_target_from_source` / Others 纠偏 / 主题归档 / 附件重试 |
 
 详见 [CONSOLE.md](CONSOLE.md)。

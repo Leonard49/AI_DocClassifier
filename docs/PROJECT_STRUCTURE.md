@@ -1,6 +1,6 @@
 # 项目结构
 
-> 对应分支：`feature/arch-data-dir-cleanup` · 更新 2026-08  
+> 对应分支：`feature/arch-data-dir-cleanup` · 更新 2026-08-12  
 > **主流程 vs 侧工具、本轮优化说明** → [ARCHITECTURE.md](ARCHITECTURE.md) · 分支年表 → [BRANCHES.md](BRANCHES.md)
 
 ## Core vs Tools
@@ -10,7 +10,7 @@
 | 入口 | `main.py` / 控制台「主流程」 | `python -m tools.*` / 控制台「副本增强·元数据表·归纳新标题·运维」 |
 | 文档宇宙 | `SCAN_*` 源目录 | 默认 `TARGET_PARENT_TOKEN`（`--scope scan` 可选） |
 | 状态 | `data/core/*` + 共享 `SHARED_STATE_DB`（UNC） | **唯一**账本 `data/tools/tool_ops.db` |
-| 职责 | 扫描 → 附件提取 → 分类 → 复制 | 元数据表/分隔符回填、bitable 导出、展示标题等 |
+| 职责 | 扫描 → 附件提取 → 分类 → 复制 | 贴表/分隔回填、bitable、展示标题写表/重命名、源刷新、Others 纠偏 |
 | 扩展 | 复制后钩子走 `enrichment/` 插件 | 新工具：加 `OP_*` + `ToolJob` + console 挂项；**禁止**再建 `*_index.db` |
 
 ```text
@@ -52,6 +52,7 @@ python main.py --all-assigned
 
 # 工具（默认只处理 TARGET 下文档）
 python -m tools.enrich_copied_docs --dry-run --limit 20
+python -m tools.enrich_copied_docs --force-metadata --steps metadata_table
 python -m tools.export_display_title_bitable --dry-run --max-documents 20
 python -m tools.rename_target_display_titles --dry-run --max-documents 20
 python -m tools.refresh_target_from_source --dry-run --limit 20

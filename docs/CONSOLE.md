@@ -1,7 +1,7 @@
 # AI DocClassifier — 本地 Web 控制台使用说明
 
 > 分支：`feature/arch-data-dir-cleanup`  
-> 更新日期：2026-08-07  
+> 更新日期：2026-08-12  
 > 地址：http://127.0.0.1:8787（仅本机）  
 > 启动：双击 `启动控制台.bat`，或 `python run_console.py`  
 > 架构（主流程 vs 侧工具）：[ARCHITECTURE.md](ARCHITECTURE.md)
@@ -84,7 +84,7 @@ notepad .env
 | 主流程 | **【全量重扫】分类复制 · 我的文件夹** | `FORCE_RESCAN`：强制全量扫描校准；已 copied 仍跳过复制 |
 | 主流程 | 【增量/全量】指定 folder | 先在下方下拉框选 id |
 | 主流程 | 【增量/全量】清单全部 enabled | **慎用** |
-| 副本增强 | 回填正式 / 试跑 | TARGET：贴元数据表 + 附件分隔（作者/源路径取自源文档） |
+| 副本增强 | 回填正式 / 试跑 | TARGET：贴元数据表 + 附件分隔（作者/源路径←源；分类路径←TARGET） |
 | 副本增强 | **强制重贴元数据表** | 删除错误旧表后重贴；需 `SHARED_STATE_DB` |
 | 文档元数据表 | 汇总 / 汇总+分表（TARGET） | 写文档元数据多维表格 |
 | 文档元数据表 | **[扫源] 按 token 分表** / 指定 folder | 三人并行常用；扫源清单 |
@@ -106,11 +106,13 @@ notepad .env
 ```bash
 python -m tools.enrich_copied_docs --dry-run --limit 20
 python -m tools.enrich_copied_docs
-# 修正错误的作者/源路径（先删旧表再贴）：
+# 修正错误的作者/源路径/分类路径（先删旧表再贴）：
 python -m tools.enrich_copied_docs --force-metadata --steps metadata_table
 ```
 
 回填时作者取源文档 `creator`，源路径取 SCAN 目录 breadcrumb（经 `SHARED_STATE_DB` 的 `copied_node → source_node` 映射）；**分类路径**取 TARGET 目录面包屑（`target_path`）。**不要**把知识枢纽路径误当作源路径。
+
+作者为空常见原因：应用缺**通讯录/联系人只读**、共享库无映射、或 `METADATA_TABLE_FETCH_AUTHOR=false`。
 
 源与 TARGET **不做双向同步**。需要跟进源正文变更时，用「源 → TARGET 内容刷新」（单向）：
 
@@ -138,6 +140,10 @@ python -m tools.refresh_target_from_source --force
 |------|------|
 | `ENABLE_METADATA_TABLE` | 分类复制后是否贴表（默认开） |
 | `ENABLE_ATTACHMENT_SEPARATOR` | 复制后/回填是否加附件分隔符（默认开） |
+| `METADATA_TABLE_FETCH_AUTHOR` | 贴表/回填解析作者（需联系人只读） |
+| `REFRESH_TARGET_SKIP_UNCHANGED` | 源刷新默认只处理源有更新的映射（默认开） |
+| `REFRESH_TARGET_OBSOLETE_FOLDER` | 旧副本废弃目录名（默认 `_已废弃_源刷新`） |
+| `DISPLAY_TITLE_*` / `DISPLAY_TITLE_RENAME_SKIP_EXISTING` | 归纳新标题写表 / 重命名 TARGET |
 | `MAX_DOCUMENTS` | 试跑时设 `10`；全量设 `0` |
 | `METADATA_BITABLE_MODE` | 命令行默认；控制台任务按钮已带 `--mode` |
 | `ENABLE_ATTACHMENT_EXTRACT` | 附件提取，耗时长 |

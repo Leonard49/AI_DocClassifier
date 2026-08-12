@@ -1,7 +1,7 @@
 # 分支变更记录
 
 > 记录各功能分支相对 `master` 的重要变化，便于选型与合并。  
-> **当前推荐落地分支：`feature/arch-data-dir-cleanup`**（2026-08-07）  
+> **当前推荐落地分支：`feature/arch-data-dir-cleanup`**（2026-08-12）  
 > **架构边界（Core vs Tools）与本轮优化摘要**：[ARCHITECTURE.md](ARCHITECTURE.md)
 
 ---
@@ -126,7 +126,8 @@
 | 能力 | 说明 |
 |------|------|
 | 复制后写元数据表 | 复制成功后在**目标文档**开头插入「文档元数据」二级标题 + 两列表格 |
-| 字段 | 产品线(tag1)、模块型号、文档类型、作者、分类路径、源路径 |
+| 字段 | 产品线(tag1)、模块型号、文档类型、作者、**分类路径**、**源路径** |
+| 路径语义 | 源路径=SCAN；分类路径=分类结果 / TARGET 目录（回填） |
 | 开关 | `ENABLE_METADATA_TABLE`（默认 true）；`METADATA_TABLE_FETCH_AUTHOR` 控制作者解析 |
 
 **关联文件：** `classify/doc_metadata.py`、`feishu/metadata_table.py`、`feishu/wiki_meta.py`、`main.py`
@@ -181,6 +182,7 @@
 | enrichment 插件 | `enrichment/`：复制后 / 回填可插拔步骤 |
 | 默认步骤 | 贴元数据表、附件分隔符（均幂等） |
 | 旧副本回填 | `tools/enrich_copied_docs.py`（默认 TARGET） |
+| 字段语义（后续纠偏） | 作者/源路径←SCAN；分类路径←tag 或 TARGET 面包屑；见 arch-data-dir-cleanup |
 | 开关 | `ENABLE_METADATA_TABLE` / `ENABLE_ATTACHMENT_SEPARATOR` |
 
 **关联文件：** `enrichment/`、`tools/enrich_copied_docs.py`、`main.py`（`enrich_after_copy`）
@@ -197,7 +199,7 @@
 |------|------|
 | 工具文档宇宙 | 默认只扫 `TARGET_PARENT_TOKEN`；未分类复制的源文档不进工具 |
 | 统一账本 | `tool_ops.db`（`OperationLedger`）：按 `(文档, op)` 独立记录 |
-| 操作互不影响 | `metadata_table` / `attachment_separator` / `metadata_bitable` / `display_title_bitable` |
+| 操作互不影响 | `metadata_table` / `attachment_separator` / `metadata_bitable` / `display_title_bitable` / `display_title_rename` / `target_content_refresh` |
 | 主流程不变 | `shared_copy_state` / `scan_snapshot` 仍只服务分类复制 |
 | 兼容 | `--scope scan` 可恢复扫源清单 |
 
@@ -218,9 +220,12 @@
 | 账本唯一 | bitable `record_id` 写入 `operations.result_ref`；废弃独立 `*_index.db` |
 | ToolJob | `tools/runner.py` 统一 scope / skip / 报告 |
 | 控制台 | 运行页分组：主流程 / 副本增强 / 文档元数据表 / 归纳新标题 / 运维纠偏；增量 vs 全量重扫 |
+| 贴表字段纠偏 | 回填作者/源路径取 **SCAN 源**（`SHARED_STATE_DB`）；**分类路径**取 TARGET 面包屑；`--force-metadata` 重贴 |
+| 展示标题 | 格式 **主题-产品线-作者**；可写 bitable 或 `rename_target_display_titles` 改 TARGET 标题 |
+| 源→TARGET 刷新 | `refresh_target_from_source`：单向重拷、保留整理标题、旧副本进 `_已废弃_源刷新` |
 | 文档 | Core vs Tools 边界；根 shim / `attachment_extractors/` 标明遗留 |
 
-**关联文件：** `util/paths.py`、`config.py`、`tools/runner.py`、`state/metadata_bitable.py`
+**关联文件：** `util/paths.py`、`config.py`、`tools/runner.py`、`classify/display_title.py`、`tools/rename_target_display_titles.py`、`tools/refresh_target_from_source.py`、`tools/enrich_copied_docs.py`
 
 ---
 
@@ -239,7 +244,8 @@ master
                                             └── feature/doc-enrichment    （enrichment 插件 + 旧副本回填）
                                                   └── feature/tool-ops-target-scope   （工具默认 TARGET + tool_ops 账本）
                                                         └── feature/arch-data-dir-cleanup  ← 当前推荐
-                                                              （data/ 布局 + 账本收敛 + 控制台增量/全量）
+                                                              （data/ + 账本收敛 + 展示标题重命名
+                                                               + 源→TARGET 单向刷新 + 贴表路径纠偏）
 ```
 
 ## 选用建议

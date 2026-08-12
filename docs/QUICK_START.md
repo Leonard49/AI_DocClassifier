@@ -1,7 +1,7 @@
 # AI DocClassifier — 快速上手指南
 
 > 面向批量落地 · 多人并行 / 一人清单增量操作手册  
-> **当前推荐分支：`feature/arch-data-dir-cleanup`**（控制台 + TARGET 侧工具 + `data/` 布局）  
+> **当前推荐分支：`feature/arch-data-dir-cleanup`**（控制台 + TARGET 侧工具 + 展示标题/源刷新/贴表纠偏）  
 > 控制台：[CONSOLE.md](CONSOLE.md) · 架构：[ARCHITECTURE.md](ARCHITECTURE.md) · 分支：[BRANCHES.md](BRANCHES.md)
 
 ---
@@ -100,7 +100,7 @@ python main.py --all-assigned
 2. 提取 PDF/Word/PPT 附件正文写回源文档（已开启）
 3. 并行读取 + AI 分类
 4. 串行复制到目标目录（共享去重，不会重复复制）
-5. 复制成功后跑文档增强管道（`ENABLE_METADATA_TABLE` 贴表；`ENABLE_ATTACHMENT_SEPARATOR` 附件分隔）。旧副本用 `python -m tools.enrich_copied_docs` 回填
+5. 复制成功后跑文档增强管道（`ENABLE_METADATA_TABLE` 贴表；`ENABLE_ATTACHMENT_SEPARATOR` 附件分隔）。旧副本用 `python -m tools.enrich_copied_docs` 回填；路径/作者错误时加 `--force-metadata`
 6. 结束时扫描目标目录，输出统计
 
 ### 常用清单命令
@@ -110,6 +110,26 @@ python main.py --list-folders
 python main.py --folder 25.Smart-FAE
 python main.py --all-enabled          # 清单内全部（负责人）
 ```
+
+### 侧工具速查（默认 TARGET）
+
+```powershell
+# 副本增强回填 / 强制重贴元数据表
+python -m tools.enrich_copied_docs --dry-run --limit 20
+python -m tools.enrich_copied_docs --force-metadata --steps metadata_table
+
+# 文档元数据 → 多维表格
+python -m tools.export_doc_metadata_bitable --scope target --mode aggregated --dry-run --max-documents 20
+
+# 归纳新标题：写表 或 重命名 TARGET（主题-产品线-作者）
+python -m tools.export_display_title_bitable --dry-run --max-documents 20
+python -m tools.rename_target_display_titles --dry-run --max-documents 20
+
+# 源有更新 → 单向刷新 TARGET（保留整理标题）
+python -m tools.refresh_target_from_source --dry-run --limit 20
+```
+
+也可在控制台「运行」页按分组点击对应任务。
 
 ### 元数据多维表格（全量归纳）
 
@@ -268,6 +288,8 @@ python -m tools.others_theme_classify_move
 | 附件 `.doc` 失败 | 需本机安装 LibreOffice 或 Word（自动转换） |
 | 附件提取失败 | `python -m tools.retry_attachment_extract` |
 | 旧副本缺元数据表/附件分隔 | `python -m tools.enrich_copied_docs`（先 `--dry-run`） |
+| 贴表作者为空 / 分类路径为 `-` | 开联系人只读；确认 `SHARED_STATE_DB`；`--force-metadata` 重贴（分类路径取 TARGET 面包屑） |
+| 源改正文后 TARGET 未更新 | 正常（不同步）；跑 `refresh_target_from_source` 或控制台「源→TARGET 内容刷新」 |
 | 各 worker 成功数之和不等于目标总数 | 正常；以**全部跑完后**目标目录实际扫描数为准 |
 
 更多细节见 [AI_DocClassifier说明文档.md](AI_DocClassifier说明文档.md)。
@@ -285,6 +307,9 @@ python -m tools.others_theme_classify_move
 | `logs/others_reclassify_move.json` | Others 产品线纠偏报告 |
 | `logs/others_theme_classify_move.json` | Others 主题归档报告 |
 | `logs/doc_metadata_bitable.json` | 元数据写入多维表格报告 |
+| `logs/display_title_bitable.json` | 归纳新标题→多维表报告 |
+| `logs/display_title_rename.json` | TARGET 标题重命名报告 |
+| `logs/refresh_target_from_source.json` | 源→TARGET 内容刷新报告 |
 | `data/core/processing_progress.json` | 本机断点续跑（勿手动改） |
 | `data/core/scan_snapshot.db` | 本机扫描快照（增量用） |
 | `data/tools/tool_ops.db` | 侧工具操作账本（含 bitable record_id） |

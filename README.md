@@ -2,7 +2,7 @@
 
 飞书知识库文档自动分类工具：扫描指定目录下的叶子文档，用 LLM 按标签树分类，并复制到目标目录的分类文件夹中。
 
-支持**多人并行**、**扫描快照增量**、**附件提取**、**文档增强**（贴表 / 附件分隔 / 可扩展回填）、**多维表格元数据**，以及**本地 Web 控制台**配置与一键跑任务。
+支持**多人并行**、**扫描快照增量**、**附件提取**、**文档增强**（贴表 / 附件分隔 / 可扩展回填）、**多维表格元数据**、**归纳新标题**（写表或重命名 TARGET）、**源→TARGET 按需刷新**，以及**本地 Web 控制台**配置与一键跑任务。
 
 ## 文档
 
@@ -45,7 +45,9 @@ python run_console.py
 - 跨进程飞书 API 限速与自动重试
 - 基于 QT-SOP-PM-048E 的模组→产品线判定，降低 Others
 - Others 占比超告警阈值时写报告，仍继续复制；超限自动分卷
-- **文档增强**：复制后贴元数据表 + 附件分隔；`enrichment/` 可扩展；旧副本可用回填工具补齐
+- **文档增强**：复制后贴元数据表 + 附件分隔；作者/源路径取 SCAN，分类路径取 TARGET；旧副本可用回填 / `--force-metadata` 纠偏
+- **归纳新标题**：格式 **主题-产品线-作者**；可写飞书多维表格，或直接重命名 TARGET 副本标题（不改源）
+- **源→TARGET 刷新**：按需单向重拷源正文，保留整理标题；旧副本进废弃夹（不做双向同步）
 - **多维表格**：独立工具写入飞书 bitable（汇总 / 按 token）
 - 存量 `Others` 纠偏 / 主题归档 / 附件失败重试（`tools/`）
 
@@ -64,7 +66,7 @@ python run_console.py
 | `feature/console-ui` | 本地 Web 控制台 |
 | `feature/doc-enrichment` | enrichment 管道 + 旧副本回填 |
 | `feature/tool-ops-target-scope` | 工具默认 TARGET + tool_ops 账本 |
-| **`feature/arch-data-dir-cleanup`** | **data/ 布局 + 账本收敛 + 控制台分组（当前推荐）** |
+| **`feature/arch-data-dir-cleanup`** | **data/ + 账本收敛 + 展示标题/源刷新/贴表纠偏（当前推荐）** |
 
 ```powershell
 git checkout feature/arch-data-dir-cleanup

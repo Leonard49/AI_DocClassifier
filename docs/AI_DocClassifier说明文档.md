@@ -42,7 +42,7 @@
 
 **Tools（侧工具，`python -m tools.*` / 控制台）**
 
-7. 对 **TARGET 下已复制文档**做旁路能力：文档元数据 → 多维表格、**归纳新标题 → 多维表格**（不改 wiki 原标题）、旧副本增强回填、Others 纠偏等  
+7. 对 **TARGET 下已复制文档**做旁路能力：文档元数据 → 多维表格、**归纳新标题**（写表或重命名 TARGET）、旧副本增强回填、**源→TARGET 按需刷新**、Others 纠偏等
 8. 可用**本地 Web 控制台**配置参数、改清单分工、一键跑任务看日志
 
 主流程与侧工具的边界、状态库、扩展约定见 **[ARCHITECTURE.md](ARCHITECTURE.md)**。
@@ -59,7 +59,7 @@
   状态：data/core/* + SHARED_STATE_DB（共享盘）
 
 【Tools】默认只处理 TARGET 叶子（未复制源文档不进工具）
-  enrich_copied_docs          → 回填贴表 / 附件分隔
+  enrich_copied_docs          → 回填贴表 / 附件分隔（作者·源路径←SCAN；分类路径←TARGET）
   export_doc_metadata_bitable → 文档元数据多维表格
   export_display_title_bitable→ 归纳新标题多维表格（主题-产品线-作者）
   rename_target_display_titles→ 按同格式重命名 TARGET 标题
@@ -115,7 +115,7 @@
 | 多维表格 | `state/metadata_bitable.py` / `display_title_bitable.py` | 确保 bitable；record_id 写入 ledger |
 | **文档增强** | **`enrichment/`** | 复制后/回填插件管道 |
 | **ToolJob** | **`tools/runner.py`** | 侧工具共用：scope / skip / 报告 |
-| 工具脚本 | `tools/` | 元数据导出、归纳新标题、回填、Others、附件重试 |
+| 工具脚本 | `tools/` | 元数据导出、归纳新标题写表/重命名、源刷新、回填、Others、附件重试 |
 | 日志 | `util/run_logging.py` | 终端输出写入 `logs/` |
 
 ---
@@ -359,11 +359,15 @@ python main.py --all-enabled
 | `FORCE_RESCAN` | `false` | 忽略 progress，全量重跑 |
 | `ENABLE_TAG_ADD` | `true` | 复制后在原文档插入标签块 |
 | `ENABLE_METADATA_TABLE` | `true` | enrichment：在**目标文档**开头插入元数据表 |
-| `METADATA_TABLE_FETCH_AUTHOR` | `true` | 贴表时解析作者显示名 |
+| `METADATA_TABLE_FETCH_AUTHOR` | `true` | 贴表时解析作者显示名（需联系人只读；取 **SCAN 源** creator） |
 | `ENABLE_ATTACHMENT_SEPARATOR` | `true` | enrichment：在「附件：」前插入醒目分隔符（幂等） |
 | `ENABLE_ATTACHMENT_EXTRACT` | `false` | 将 PDF/Word/PPT 附件提取为文本写回源文档 |
 | `MAX_DOCUMENTS` | 无限制 | 测试用：只处理前 N 篇（`0`=不限制） |
 | `SAVE_RUN_LOG` | `true` | 日志写入 `logs/` |
+| `REFRESH_TARGET_SKIP_UNCHANGED` | `true` | 源→TARGET 刷新时默认跳过源未变更项 |
+| `REFRESH_TARGET_OBSOLETE_FOLDER` | `_已废弃_源刷新` | 刷新后退役旧副本的 TARGET 子目录名 |
+
+贴表字段：`作者`/`源路径` ← SCAN（经 `SHARED_STATE_DB`）；`分类路径` ← 分类 tag 或 TARGET 面包屑。纠偏用 `enrich_copied_docs --force-metadata`。
 
 ### 6.3.1 元数据多维表格（独立工具）
 
@@ -382,6 +386,17 @@ python -m tools.export_doc_metadata_bitable --all-enabled --mode aggregated
 ```
 
 三人并行建议先 `per-token`，最后一人再跑汇总表。详见 [CONSOLE.md](CONSOLE.md)、[分类准则说明.md](分类准则说明.md)。
+
+### 6.3.2 归纳新标题与源刷新
+
+| 参数 / 工具 | 说明 |
+|-------------|------|
+| 格式 | **文章主题-产品线-作者**（`classify/display_title.py`） |
+| `export_display_title_bitable` | 只写多维表格，不改 wiki |
+| `rename_target_display_titles` | 按同格式改 **TARGET** 标题（不改 SCAN） |
+| `DISPLAY_TITLE_*` / `DISPLAY_TITLE_RENAME_SKIP_EXISTING` | 写表与重命名开关 |
+| `refresh_target_from_source` | 源有更新时单向重拷；保留整理标题；旧副本进废弃夹 |
+| `REFRESH_TARGET_*` | 见上表 |
 
 ### 6.4 性能调优
 
@@ -622,12 +637,33 @@ pip install -r requirements.txt
 | enrichment 附件分隔（`ENABLE_ATTACHMENT_SEPARATOR`） | 复制成功后 / 回填 / 附件提取时 | 「附件：」标题前醒目横幅 |
 | 多维表格工具 | 控制台「文档元数据表」/ 独立 CLI | 默认 TARGET；`[扫源]` 任务可扫清单 |
 
+贴表字段注意：
+
+| 字段 | 正确来源 |
+|------|----------|
+| 作者 | SCAN 源 creator（需通讯录权限） |
+| 源路径 | SCAN 文件夹 breadcrumb |
+| 分类路径 | 分类 tag；回填时用 TARGET 目录面包屑 |
+
 旧副本（去重跳过、不会再走复制后钩子）请用：
 
 ```powershell
 python -m tools.enrich_copied_docs --dry-run --limit 20
 python -m tools.enrich_copied_docs
+# 作者/路径错误时强制重贴：
+python -m tools.enrich_copied_docs --force-metadata --steps metadata_table
 ```
+
+### Q11b：源改正文后 TARGET 会自动变吗？
+
+**不会。** SCAN 与 TARGET 是独立副本，不做双向同步。需要时跑：
+
+```powershell
+python -m tools.refresh_target_from_source --dry-run --limit 20
+python -m tools.refresh_target_from_source
+```
+
+或控制台「运维纠偏 → 源 → TARGET 内容刷新」。会保留当前 TARGET 整理标题，旧副本移入 `_已废弃_源刷新`。
 
 ### Q12：已知风险（生产环境）
 
@@ -1093,7 +1129,8 @@ flowchart LR
     MAIN -->|写入副本 + 可选 enrichment| TGT
     MAIN -->|claim / copied| SS2["SHARED_STATE_DB"]
     TGT -->|默认 scope=target 列举叶子| TOOLS
-    TOOLS -->|upsert 元数据 / 归纳新标题| BIT
+    TOOLS -->|upsert 元数据 / 归纳新标题 / 可选改标题| BIT
+    TOOLS -->|按需源刷新| TGT
     TOOLS -->|回填贴表分隔等| TGT
     TOOLS -->|按 op 记 done + result_ref| LEDGER
 ```
@@ -1133,8 +1170,9 @@ sequenceDiagram
 |----|------|
 | 边界 | Core 只负责「源 → TARGET」；Tools 默认只碰 TARGET，**未复制的源文档不进工具** |
 | 状态分离 | Core 用 `data/core/*` + `SHARED_STATE_DB`；Tools 用 **`data/tools/tool_ops.db`**，互不替代 |
-| op 独立 | `metadata_table` / `attachment_separator` / `metadata_bitable` / `display_title_bitable` 互不影响 |
-| 归纳新标题 | 只写 bitable + Wiki 链接，**不改 wiki 原标题** |
+| op 独立 | `metadata_table` / `attachment_separator` / `metadata_bitable` / `display_title_bitable` / `display_title_rename` / `target_content_refresh` 互不影响 |
+| 归纳新标题 | 可写 bitable（不改 wiki），或 `rename_target_display_titles` **只改 TARGET 标题** |
+| 源↔TARGET | **不做双向同步**；跟进源正文用 `refresh_target_from_source` |
 | 复制后钩子 | `main` 里 enrichment 只覆盖**本次新复制**；历史副本用 `enrich_copied_docs` |
 | 可选扫源 | 工具加 `--scope scan` 才扫清单（旧行为，多人并行元数据分表时偶用） |
 | 扩展 | 新工具：`OP_*` + `ToolJob` + 控制台挂项；禁止再新建 `*_index.db` |
@@ -1143,4 +1181,4 @@ sequenceDiagram
 
 ---
 
-*文档对应仓库：AI_DocClassifier · 分支 feature/arch-data-dir-cleanup · 更新 2026-08-07*
+*文档对应仓库：AI_DocClassifier · 分支 feature/arch-data-dir-cleanup · 更新 2026-08-12*
