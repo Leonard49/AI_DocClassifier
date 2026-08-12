@@ -243,7 +243,7 @@
 
 | 日期 | 优化内容 | 提交 / 关键 |
 |------|----------|-------------|
-| 2026-08-12 | **控制台清单可视化添加 SCAN token**：粘贴 wiki token（或 URL）→ 可选飞书解析 name/id →「添加并保存」写入 `scan_folders.json`；行可移除后再保存。不再必须手改 JSON。API：`POST /api/folders/preview`、`POST /api/folders/add`。同步建立 BRANCHES「迭代优化日志」记账约定 | `29edcdc` · `console/app.py` · `console/static/*` · `state/scan_folders.py` · [CONSOLE.md](CONSOLE.md) · [BRANCHES.md](BRANCHES.md) |
+| 2026-08-12 | **控制台清单可视化添加 SCAN token**：粘贴 wiki token（或 URL）→ 可选飞书解析 name/id →「添加并保存」写入 `scan_folders.json`；行可移除后再保存。不再必须手改 JSON。API：`POST /api/folders/preview`、`POST /api/folders/add`。同步建立 BRANCHES「迭代优化日志」记账约定 | `a56bb5c` · `console/app.py` · `console/static/*` · `state/scan_folders.py` · [CONSOLE.md](CONSOLE.md) · [BRANCHES.md](BRANCHES.md) |
 | 2026-08-12 | **文档同步**：贴表双路径、展示标题、源刷新、作者排障等写回 README / QUICK_START / CONSOLE / 分类准则 / 说明文档 / 增量方案对比 | `844ee66` |
 | 2026-08-12 | **贴表「分类路径」回填**：enrichment 无 `tag` 时用 TARGET 面包屑 `target_path`；产品线可回退路径第一段；`--force-metadata` 重贴 | `1f94b61` · `enrichment/*` · `classify/doc_metadata.py` · `tools/enrich_copied_docs.py` |
 | 2026-08-12 | **归纳新标题格式**改为 **主题-产品线-作者**；新增 `rename_target_display_titles`（只改 TARGET）；**源→TARGET 单向内容刷新** `refresh_target_from_source`（保留整理标题，旧副本进 `_已废弃_源刷新`）；ops：`display_title_rename` / `target_content_refresh` | `d8c03cd` · `classify/display_title.py` · `tools/rename_*` · `tools/refresh_*` · `feishu/wiki_meta.py` |
