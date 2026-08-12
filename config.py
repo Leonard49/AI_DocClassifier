@@ -73,6 +73,29 @@ ENABLE_TAG_ADD = _env_bool("ENABLE_TAG_ADD", True)
 # After copy: insert metadata key/value table at the top of the *target* Docx
 ENABLE_METADATA_TABLE = _env_bool("ENABLE_METADATA_TABLE", True)
 METADATA_TABLE_FETCH_AUTHOR = _env_bool("METADATA_TABLE_FETCH_AUTHOR", True)
+
+
+def _parse_int_list(raw: str, default: list) -> list:
+    text = (raw or "").strip()
+    if not text:
+        return list(default)
+    out = []
+    for part in text.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            out.append(max(40, int(part)))
+        except ValueError:
+            continue
+    return out if len(out) >= 2 else list(default)
+
+
+# Docx table column widths in px (label, value). Default Feishu width is ~100px → wraps badly.
+METADATA_TABLE_COLUMN_WIDTHS = _parse_int_list(
+    _env("METADATA_TABLE_COLUMN_WIDTHS"),
+    [160, 560],
+)
 # Backfill / after-copy: insert eye-catching separator before `附件：` headings
 ENABLE_ATTACHMENT_SEPARATOR = _env_bool("ENABLE_ATTACHMENT_SEPARATOR", True)
 ENABLE_ATTACHMENT_EXTRACT = _env_bool("ENABLE_ATTACHMENT_EXTRACT", False)

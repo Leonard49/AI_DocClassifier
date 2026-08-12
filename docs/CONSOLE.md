@@ -139,6 +139,7 @@ python -m tools.refresh_target_from_source --force
 | 配置 | 建议 |
 |------|------|
 | `ENABLE_METADATA_TABLE` | 分类复制后是否贴表（默认开） |
+| `METADATA_TABLE_COLUMN_WIDTHS` | 贴表列宽 px，如 `160,560`（标签,值） |
 | `ENABLE_ATTACHMENT_SEPARATOR` | 复制后/回填是否加附件分隔符（默认开） |
 | `METADATA_TABLE_FETCH_AUTHOR` | 贴表/回填解析作者（需联系人只读） |
 | `REFRESH_TARGET_SKIP_UNCHANGED` | 源刷新默认只处理源有更新的映射（默认开） |

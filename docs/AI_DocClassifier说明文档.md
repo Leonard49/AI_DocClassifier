@@ -359,6 +359,7 @@ python main.py --all-enabled
 | `FORCE_RESCAN` | `false` | 忽略 progress，全量重跑 |
 | `ENABLE_TAG_ADD` | `true` | 复制后在原文档插入标签块 |
 | `ENABLE_METADATA_TABLE` | `true` | enrichment：在**目标文档**开头插入元数据表 |
+| `METADATA_TABLE_COLUMN_WIDTHS` | `160,560` | 贴表两列宽度（px：标签,值）；加宽可减少路径换行 |
 | `METADATA_TABLE_FETCH_AUTHOR` | `true` | 贴表时解析作者显示名（需联系人只读；取 **SCAN 源** creator） |
 | `ENABLE_ATTACHMENT_SEPARATOR` | `true` | enrichment：在「附件：」前插入醒目分隔符（幂等） |
 | `ENABLE_ATTACHMENT_EXTRACT` | `false` | 将 PDF/Word/PPT 附件提取为文本写回源文档 |

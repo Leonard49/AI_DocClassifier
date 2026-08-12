@@ -37,11 +37,34 @@ def _text_block(block_id: str, content: str, *, bold: bool = False) -> dict:
 class MetadataTableInserter:
     """Paste metadata as a 2-column table at the start of the target Docx."""
 
-    def __init__(self, token_manager: TokenManager, timeout: int = 60):
+    # Feishu default column_width ≈ 100px; widen so paths/authors don't wrap heavily.
+    DEFAULT_COLUMN_WIDTHS = (160, 560)
+
+    def __init__(
+        self,
+        token_manager: TokenManager,
+        timeout: int = 60,
+        *,
+        column_widths: Optional[Sequence[int]] = None,
+    ):
         self.token_manager = token_manager
         self.timeout = timeout
         self._resolver = FeishuDocumentTagAdder(token_manager, timeout=timeout)
         self.base_url = "https://open.feishu.cn/open-apis/docx/v1/documents"
+        widths = list(column_widths) if column_widths else None
+        if not widths:
+            try:
+                import config as _cfg
+
+                widths = list(
+                    getattr(_cfg, "METADATA_TABLE_COLUMN_WIDTHS", None)
+                    or self.DEFAULT_COLUMN_WIDTHS
+                )
+            except Exception:
+                widths = list(self.DEFAULT_COLUMN_WIDTHS)
+        if len(widths) < 2:
+            widths = list(self.DEFAULT_COLUMN_WIDTHS)
+        self.column_widths = [max(40, int(w)) for w in widths[:2]]
 
     def _headers(self) -> dict:
         return {
@@ -144,6 +167,7 @@ class MetadataTableInserter:
                     "property": {
                         "row_size": len(rows),
                         "column_size": 2,
+                        "column_width": list(self.column_widths),
                     }
                 },
                 "children": [],
