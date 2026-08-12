@@ -1,6 +1,6 @@
 # 架构说明：Core（主流程）与 Tools（侧工具）
 
-> 对应分支：`feature/arch-data-dir-cleanup` · 更新 2026-08-07  
+> 对应分支：`feature/arch-data-dir-cleanup` · 更新 2026-08-12  
 > 分支变更年表见 [BRANCHES.md](BRANCHES.md) · 目录树见 [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) · 附录流程图见 [说明文档 §附录](AI_DocClassifier说明文档.md#附录各阶段逻辑图)
 
 本文回答：
@@ -33,7 +33,7 @@ flowchart LR
 
 | | **Core（主流程）** | **Tools（侧工具）** |
 |--|--|--|
-| 入口 | `main.py`（控制台「分类」） | `python -m tools.*`（「元数据表 / 归纳新标题 / 工具」） |
+| 入口 | `main.py`（控制台「主流程」） | `python -m tools.*`（「副本增强 / 文档元数据表 / 归纳新标题 / 运维纠偏」） |
 | 文档宇宙 | `SCAN_*` / `scan_folders.json` **源** | 默认 **`TARGET_PARENT_TOKEN`**；`--scope scan` 可选扫源 |
 | 本地状态 | `data/core/` | **唯一** `data/tools/tool_ops.db` |
 | 团队共享 | `SHARED_STATE_DB` 等 UNC | 一般不写共享去重库 |
@@ -129,12 +129,14 @@ logs/
 
 ## 6. 控制台任务对应
 
+筛选栏：`全部 | 主流程 | 副本增强 | 文档元数据表 | 归纳新标题 | 运维纠偏`（分组卡片；试跑虚线样式；扫源带标签）。
+
 | 筛选 | 归属 | 典型任务 |
 |------|------|----------|
-| 主流程 | Core | `main.py --all-assigned` 等 |
-| 副本增强 | Tools | `enrich_copied_docs` |
-| 文档元数据表 | Tools | `export_doc_metadata_bitable` |
-| **归纳新标题** | Tools | `export_display_title_bitable` |
-| 运维纠偏 | Tools | Others / 附件重试 |
+| 主流程 | Core | 增量/全量分类复制（我的文件夹 / 指定 folder / 全部 enabled） |
+| 副本增强 | Tools | `enrich_copied_docs`（正式 / 试跑 / 强制重贴元数据） |
+| 文档元数据表 | Tools | `export_doc_metadata_bitable`（TARGET 或 `[扫源]`） |
+| **归纳新标题** | Tools | `export_display_title_bitable`（不改 wiki） |
+| 运维纠偏 | Tools | Others 纠偏 / 主题归档 / 附件重试 |
 
 详见 [CONSOLE.md](CONSOLE.md)。

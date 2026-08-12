@@ -217,6 +217,7 @@
 | 旧库迁移 | 根目录 `*.db` 可自动迁入 `data/`（`AUTO_MIGRATE_DATA_DIR`） |
 | 账本唯一 | bitable `record_id` 写入 `operations.result_ref`；废弃独立 `*_index.db` |
 | ToolJob | `tools/runner.py` 统一 scope / skip / 报告 |
+| 控制台 | 运行页分组：主流程 / 副本增强 / 文档元数据表 / 归纳新标题 / 运维纠偏；增量 vs 全量重扫 |
 | 文档 | Core vs Tools 边界；根 shim / `attachment_extractors/` 标明遗留 |
 
 **关联文件：** `util/paths.py`、`config.py`、`tools/runner.py`、`state/metadata_bitable.py`

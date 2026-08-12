@@ -2,7 +2,7 @@
 
 > 飞书知识库文档自动分类系统  
 > 版本：`feature/arch-data-dir-cleanup`（DATA_DIR + 统一工具账本 + TARGET 侧工具）  
-> 更新日期：2026-08-07  
+> 更新日期：2026-08-12  
 > 操作手册：[QUICK_START.md](QUICK_START.md) · 控制台：[CONSOLE.md](CONSOLE.md) · 分支：[BRANCHES.md](BRANCHES.md) · **架构（Core vs Tools）**：[ARCHITECTURE.md](ARCHITECTURE.md)
 
 ---
@@ -606,9 +606,10 @@ python -m tools.retry_attachment_extract
 见 **[CONSOLE.md](CONSOLE.md)**。简要：
 
 ```powershell
-git checkout feature/doc-enrichment
+git checkout feature/arch-data-dir-cleanup
 pip install -r requirements.txt
 # 双击 启动控制台.bat  → http://127.0.0.1:8787
+# 运行页：主流程 | 副本增强 | 文档元数据表 | 归纳新标题 | 运维纠偏
 ```
 
 ### Q11：元数据贴表、附件分隔和多维表格有什么区别？
@@ -617,7 +618,7 @@ pip install -r requirements.txt
 |------|------|------|
 | enrichment 贴表（`ENABLE_METADATA_TABLE`） | 复制成功后 / 回填工具 | **目标副本**开头表格 |
 | enrichment 附件分隔（`ENABLE_ATTACHMENT_SEPARATOR`） | 复制成功后 / 回填 / 附件提取时 | 「附件：」标题前醒目横幅 |
-| 多维表格工具 | 独立扫描源目录 | TARGET 下 bitable（汇总 / 按 token） |
+| 多维表格工具 | 控制台「文档元数据表」/ 独立 CLI | 默认 TARGET；`[扫源]` 任务可扫清单 |
 
 旧副本（去重跳过、不会再走复制后钩子）请用：
 
@@ -644,8 +645,8 @@ python -m tools.enrich_copied_docs
 
 ```powershell
 # 1. 环境
-git checkout feature/doc-enrichment
-git pull origin feature/doc-enrichment
+git checkout feature/arch-data-dir-cleanup
+git pull origin feature/arch-data-dir-cleanup
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
@@ -670,8 +671,8 @@ python main.py --all-assigned
 
 ```powershell
 git fetch origin
-git checkout feature/doc-enrichment
-git pull origin feature/doc-enrichment
+git checkout feature/arch-data-dir-cleanup
+git pull origin feature/arch-data-dir-cleanup
 ```
 
 ---

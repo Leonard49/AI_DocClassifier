@@ -7,7 +7,7 @@
 
 | | **Core（主流程）** | **Tools（侧工具）** |
 |--|--|--|
-| 入口 | `main.py` | `python -m tools.*` |
+| 入口 | `main.py` / 控制台「主流程」 | `python -m tools.*` / 控制台「副本增强·元数据表·归纳新标题·运维」 |
 | 文档宇宙 | `SCAN_*` 源目录 | 默认 `TARGET_PARENT_TOKEN`（`--scope scan` 可选） |
 | 状态 | `data/core/*` + 共享 `SHARED_STATE_DB`（UNC） | **唯一**账本 `data/tools/tool_ops.db` |
 | 职责 | 扫描 → 附件提取 → 分类 → 复制 | 元数据表/分隔符回填、bitable 导出、展示标题等 |

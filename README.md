@@ -19,8 +19,8 @@
 ## 快速开始（推荐：控制台）
 
 ```powershell
-git checkout feature/doc-enrichment
-git pull origin feature/doc-enrichment
+git checkout feature/arch-data-dir-cleanup
+git pull origin feature/arch-data-dir-cleanup
 
 python -m venv .venv
 .venv\Scripts\activate
@@ -38,7 +38,7 @@ python run_console.py
 ## 主要能力
 
 - 仅处理叶子 `docx`（跳过目录/索引页）
-- **本地 Web 控制台**：配置 `.env`、清单分工、一键跑分类/元数据并看日志
+- **本地 Web 控制台**：配置 `.env`、清单分工；运行页按「主流程 / 副本增强 / 文档元数据表 / 归纳新标题 / 运维纠偏」分组一键跑任务
 - **附件提取**：PDF / Word / PPT → 文本写回源文档
 - 并行读取与 AI 分类，串行复制到飞书
 - 本机断点续跑 + 扫描快照增量 + 全局 `obj_token` 去重（多人并行）
@@ -62,9 +62,11 @@ python run_console.py
 | `feature/doc-metadata-bitable` | 元数据 → 多维表格（独立工具） |
 | `feature/doc-metadata-inline-table` | 元数据贴目标文档开头 |
 | `feature/console-ui` | 本地 Web 控制台 |
-| **`feature/doc-enrichment`** | **控制台 + enrichment 管道 + 旧副本回填（当前推荐）** |
+| `feature/doc-enrichment` | enrichment 管道 + 旧副本回填 |
+| `feature/tool-ops-target-scope` | 工具默认 TARGET + tool_ops 账本 |
+| **`feature/arch-data-dir-cleanup`** | **data/ 布局 + 账本收敛 + 控制台分组（当前推荐）** |
 
 ```powershell
-git checkout feature/doc-enrichment
-git pull origin feature/doc-enrichment
+git checkout feature/arch-data-dir-cleanup
+git pull origin feature/arch-data-dir-cleanup
 ```

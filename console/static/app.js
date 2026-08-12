@@ -132,8 +132,12 @@
   }
 
   function sortJobsInGroup(list) {
-    // formal first, dry_run last; keep relative order otherwise
-    return [...list].sort((a, b) => Number(!!a.dry_run) - Number(!!b.dry_run));
+    // formal first, dry_run last; needs_folder near end of formal; keep relative order otherwise
+    return [...list].sort((a, b) => {
+      const score = (j) =>
+        (j.dry_run ? 4 : 0) + (j.needs_folder ? 2 : 0) + (j.danger && !j.force_rescan ? 1 : 0);
+      return score(a) - score(b);
+    });
   }
 
   function renderJobs() {

@@ -136,7 +136,7 @@ JOB_CATALOG: List[JobSpec] = [
         "enrich_backfill_dry",
         "副本增强回填（试跑 · 最多 20 篇 · 不写飞书）",
         "enrich",
-        "tools.enrich_copied_docs --dry-run --limit 20",
+        "TARGET · dry-run · 最多 20 篇",
         [
             sys.executable,
             "-m",
@@ -155,7 +155,7 @@ JOB_CATALOG: List[JobSpec] = [
         "metadata_aggregated",
         "文档元数据 → 仅汇总表（TARGET）",
         "bitable_meta",
-        "export_doc_metadata_bitable --scope target --mode aggregated",
+        "只写汇总多维表格 · TARGET 已复制文档",
         [
             sys.executable,
             "-m",
@@ -171,7 +171,7 @@ JOB_CATALOG: List[JobSpec] = [
         "metadata_both",
         "文档元数据 → 汇总+分表（TARGET）",
         "bitable_meta",
-        "export_doc_metadata_bitable --scope target --mode both",
+        "汇总表 + 按目录分表 · TARGET",
         [
             sys.executable,
             "-m",
@@ -187,7 +187,7 @@ JOB_CATALOG: List[JobSpec] = [
         "metadata_per_token",
         "[扫源] 文档元数据 → 按 token 分表",
         "bitable_meta",
-        "扫源清单 --all-assigned --mode per-token（三人并行常用）",
+        "扫源清单 --all-assigned · 三人并行常用",
         [
             sys.executable,
             "-m",
@@ -204,7 +204,7 @@ JOB_CATALOG: List[JobSpec] = [
         "metadata_dry",
         "文档元数据（试跑 · 最多 20 篇 · 不写飞书）",
         "bitable_meta",
-        "TARGET aggregated dry-run",
+        "TARGET aggregated dry-run · 不写多维表格",
         [
             sys.executable,
             "-m",
@@ -225,7 +225,7 @@ JOB_CATALOG: List[JobSpec] = [
         "display_title_agg",
         "归纳新标题 → 写入汇总表（TARGET，不改 wiki 原标题）",
         "bitable_title",
-        "日期-型号或路径-作用 + Wiki 链接",
+        "日期-型号或路径-作用 + Wiki 链接 · 只写多维表格",
         [
             sys.executable,
             "-m",
@@ -239,7 +239,7 @@ JOB_CATALOG: List[JobSpec] = [
         "display_title_dry",
         "归纳新标题（试跑 · 最多 20 篇 · 不写飞书）",
         "bitable_title",
-        "不改 wiki 原标题",
+        "TARGET · 不改 wiki 原标题",
         [
             sys.executable,
             "-m",
@@ -258,21 +258,25 @@ JOB_CATALOG: List[JobSpec] = [
         "reclassify_others",
         "Others 产品线纠偏",
         "ops",
-        "tools.reclassify_others_move",
+        "TARGET/Others* 重分类后 move（非 copy）",
         [sys.executable, "-m", "tools.reclassify_others_move"],
+        scope="target",
+        danger=True,
     ),
     JobSpec(
         "others_theme",
         "Others 主题归档",
         "ops",
-        "tools.others_theme_classify_move",
+        "主题子夹挂主 Others，尽量清空 Others (2)",
         [sys.executable, "-m", "tools.others_theme_classify_move"],
+        scope="target",
+        danger=True,
     ),
     JobSpec(
         "retry_attachments",
         "附件提取失败重试",
         "ops",
-        "tools.retry_attachment_extract",
+        "读取 logs/attachment_extract.json 失败清单后重试",
         [sys.executable, "-m", "tools.retry_attachment_extract"],
     ),
 ]

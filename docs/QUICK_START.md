@@ -20,7 +20,7 @@ pip install -r requirements.txt
 
 - **配置**：编辑 `.env`（飞书 / LLM / 并行 / 元数据开关）
 - **清单分工**：改 `scan_folders.json` 的 assignee / enabled
-- **运行**：分类复制、**元数据表**、**归纳新标题**、副本增强回填等，右侧看实时日志
+- **运行**：分组卡片（主流程 / 副本增强 / 文档元数据表 / 归纳新标题 / 运维纠偏），右侧看实时日志
 
 完整说明见 **[控制台使用说明](CONSOLE.md)**。主程序与侧工具边界见 **[ARCHITECTURE.md](ARCHITECTURE.md)**。
 
@@ -45,8 +45,8 @@ pip install -r requirements.txt
 # 1. 克隆 / 更新代码
 git clone https://github.com/Leonard49/AI_DocClassifier.git
 cd AI_DocClassifier
-git checkout feature/doc-enrichment
-git pull origin feature/doc-enrichment
+git checkout feature/arch-data-dir-cleanup
+git pull origin feature/arch-data-dir-cleanup
 
 # 2. Python 环境
 python -m venv .venv
@@ -178,8 +178,8 @@ scan_folders.json (assignee=各人 WORKER_ID)
 
 ```powershell
 git fetch origin
-git checkout feature/doc-enrichment
-git pull origin feature/doc-enrichment
+git checkout feature/arch-data-dir-cleanup
+git pull origin feature/arch-data-dir-cleanup
 pip install -r requirements.txt   # 依赖有变时执行
 ```
 
