@@ -69,6 +69,8 @@ Core **不**负责：汇总多维表格、归纳新标题表、对历史副本�
 | `enrich_copied_docs` | `metadata_table` / `attachment_separator` | 回填旧副本正文 |
 | `export_doc_metadata_bitable` | `metadata_bitable` | 文档元数据 → 多维表格 |
 | `export_display_title_bitable` | `display_title_bitable` | **归纳新标题** → 多维表格（不改 wiki 标题） |
+| `rename_target_display_titles` | `display_title_rename` | 按展示标题格式重命名 TARGET |
+| `refresh_target_from_source` | `target_content_refresh` | 源 → TARGET 单向重拷（保留标题；旧副本进废弃夹） |
 
 同一文档上各 op **互不影响**：例如元数据表已 done，仍可跑归纳新标题。
 
@@ -136,7 +138,7 @@ logs/
 | 主流程 | Core | 增量/全量分类复制（我的文件夹 / 指定 folder / 全部 enabled） |
 | 副本增强 | Tools | `enrich_copied_docs`（正式 / 试跑 / 强制重贴元数据） |
 | 文档元数据表 | Tools | `export_doc_metadata_bitable`（TARGET 或 `[扫源]`） |
-| **归纳新标题** | Tools | `export_display_title_bitable`（不改 wiki） |
-| 运维纠偏 | Tools | Others 纠偏 / 主题归档 / 附件重试 |
+| **归纳新标题** | Tools | `export_display_title_bitable`（不改 wiki）/ `rename_target_display_titles`（只改 TARGET） |
+| 运维纠偏 | Tools | 源→TARGET 内容刷新 / Others 纠偏 / 主题归档 / 附件重试 |
 
 详见 [CONSOLE.md](CONSOLE.md)。

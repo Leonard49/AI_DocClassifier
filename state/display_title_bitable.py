@@ -23,6 +23,10 @@ _TYPE_URL = 15
 FIELD_DISPLAY_TITLE = "展示标题"
 FIELD_ORIGINAL_TITLE = "原标题"
 FIELD_DOC_ID = "文档ID"
+FIELD_THEME = "文章主题"
+FIELD_PRODUCT_LINE = "产品线"
+FIELD_AUTHOR = "作者"
+# Legacy columns (still written for older tables)
 FIELD_DATE = "日期"
 FIELD_MODEL_OR_PATH = "型号或路径"
 FIELD_PURPOSE = "文章作用"
@@ -46,6 +50,9 @@ def _desired_fields() -> List[Dict[str, Any]]:
         {"field_name": FIELD_DISPLAY_TITLE, "type": _TYPE_TEXT},
         {"field_name": FIELD_ORIGINAL_TITLE, "type": _TYPE_TEXT},
         {"field_name": FIELD_DOC_ID, "type": _TYPE_TEXT},
+        {"field_name": FIELD_THEME, "type": _TYPE_TEXT},
+        {"field_name": FIELD_PRODUCT_LINE, "type": _TYPE_TEXT},
+        {"field_name": FIELD_AUTHOR, "type": _TYPE_TEXT},
         {"field_name": FIELD_DATE, "type": _TYPE_TEXT},
         {"field_name": FIELD_MODEL_OR_PATH, "type": _TYPE_TEXT},
         {"field_name": FIELD_PURPOSE, "type": _TYPE_TEXT},
@@ -65,13 +72,19 @@ def row_to_fields(
     row: DisplayTitleRow, *, updated_ms: Optional[int] = None
 ) -> Dict[str, Any]:
     ts = updated_ms if updated_ms is not None else int(time.time() * 1000)
+    theme = getattr(row, "theme", None) or row.purpose
+    product = getattr(row, "product_line", None) or row.model_or_path
+    author = getattr(row, "author", None) or ""
     fields: Dict[str, Any] = {
         FIELD_DISPLAY_TITLE: row.display_title,
         FIELD_ORIGINAL_TITLE: row.original_title,
         FIELD_DOC_ID: row.obj_token,
+        FIELD_THEME: theme,
+        FIELD_PRODUCT_LINE: product,
+        FIELD_AUTHOR: author,
         FIELD_DATE: row.date_part,
-        FIELD_MODEL_OR_PATH: row.model_or_path,
-        FIELD_PURPOSE: row.purpose,
+        FIELD_MODEL_OR_PATH: product,
+        FIELD_PURPOSE: theme,
         FIELD_MODULES: row.modules,
         FIELD_PATH: row.path_breadcrumb,
         FIELD_SOURCE_FOLDER: row.source_folder,

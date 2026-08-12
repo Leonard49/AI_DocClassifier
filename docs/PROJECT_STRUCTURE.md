@@ -36,6 +36,8 @@ AI_DocClassifier/
 │   ├── enrich_copied_docs.py
 │   ├── export_doc_metadata_bitable.py
 │   ├── export_display_title_bitable.py
+│   ├── rename_target_display_titles.py
+│   ├── refresh_target_from_source.py
 │   └── …
 ├── export_*.py / retry_*.py    # 根目录兼容 shim → tools.*
 ├── console/
@@ -51,6 +53,8 @@ python main.py --all-assigned
 # 工具（默认只处理 TARGET 下文档）
 python -m tools.enrich_copied_docs --dry-run --limit 20
 python -m tools.export_display_title_bitable --dry-run --max-documents 20
+python -m tools.rename_target_display_titles --dry-run --max-documents 20
+python -m tools.refresh_target_from_source --dry-run --limit 20
 python -m tools.export_doc_metadata_bitable --mode aggregated --dry-run --max-documents 20
 
 # 显式扫源（旧行为）

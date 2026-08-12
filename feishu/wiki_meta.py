@@ -98,6 +98,39 @@ class WikiMetaClient:
                     return name
         return ""
 
+    def update_title(self, space_id: str, node_token: str, title: str) -> None:
+        """Rename a wiki node (TARGET copy). Does not touch source SCAN nodes."""
+        sid = (space_id or "").strip()
+        token = (node_token or "").strip()
+        new_title = (title or "").strip()
+        if not sid or not token:
+            raise ValueError("space_id / node_token required")
+        if not new_title:
+            raise ValueError("title is empty")
+        # Feishu wiki title practical limit
+        if len(new_title) > 800:
+            new_title = new_title[:797] + "..."
+        url = (
+            f"https://open.feishu.cn/open-apis/wiki/v2/spaces/"
+            f"{sid}/nodes/{token}/update_title"
+        )
+        resp = feishu_request(
+            "POST",
+            url,
+            headers={
+                **self._headers(),
+                "Content-Type": "application/json; charset=utf-8",
+            },
+            json={"title": new_title},
+        )
+        data = resp.json()
+        if data.get("code") != 0:
+            raise RuntimeError(
+                f"update_title failed code={data.get('code')} msg={data.get('msg')}"
+            )
+        # Invalidate cache so subsequent get_node sees new title
+        self._node_cache.pop(token, None)
+
     def build_folder_path(
         self,
         node_token: str,

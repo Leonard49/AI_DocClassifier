@@ -21,12 +21,16 @@ OP_METADATA_TABLE = "metadata_table"
 OP_ATTACHMENT_SEPARATOR = "attachment_separator"
 OP_METADATA_BITABLE = "metadata_bitable"
 OP_DISPLAY_TITLE_BITABLE = "display_title_bitable"
+OP_DISPLAY_TITLE_RENAME = "display_title_rename"
+OP_TARGET_CONTENT_REFRESH = "target_content_refresh"
 
 KNOWN_OPS = (
     OP_METADATA_TABLE,
     OP_ATTACHMENT_SEPARATOR,
     OP_METADATA_BITABLE,
     OP_DISPLAY_TITLE_BITABLE,
+    OP_DISPLAY_TITLE_RENAME,
+    OP_TARGET_CONTENT_REFRESH,
 )
 
 
@@ -209,6 +213,8 @@ __all__ = [
     "OP_ATTACHMENT_SEPARATOR",
     "OP_METADATA_BITABLE",
     "OP_DISPLAY_TITLE_BITABLE",
+    "OP_DISPLAY_TITLE_RENAME",
+    "OP_TARGET_CONTENT_REFRESH",
     "KNOWN_OPS",
     "OperationLedger",
     "bitable_scope_key",

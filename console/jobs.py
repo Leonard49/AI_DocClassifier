@@ -47,9 +47,9 @@ JOB_CATEGORY_META: List[Dict[str, str]] = [
     {
         "id": "bitable_title",
         "label": "归纳新标题",
-        "hint": "展示标题 → 多维表格（TARGET，不改 wiki 原标题）",
+        "hint": "生成展示标题：可写多维表格，或直接重命名 TARGET 副本（不改源）",
     },
-    {"id": "ops", "label": "运维纠偏", "hint": "Others 纠偏 / 主题归档 / 附件重试"},
+    {"id": "ops", "label": "运维纠偏", "hint": "源刷新 / Others 纠偏 / 主题归档 / 附件重试"},
 ]
 
 
@@ -225,7 +225,7 @@ JOB_CATALOG: List[JobSpec] = [
         "display_title_agg",
         "归纳新标题 → 写入汇总表（TARGET，不改 wiki 原标题）",
         "bitable_title",
-        "日期-型号或路径-作用 + Wiki 链接 · 只写多维表格",
+        "格式：主题-产品线-作者 · 只写多维表格",
         [
             sys.executable,
             "-m",
@@ -236,8 +236,41 @@ JOB_CATALOG: List[JobSpec] = [
         scope="target",
     ),
     JobSpec(
+        "display_title_rename",
+        "归纳新标题 → 重命名 TARGET 副本标题",
+        "bitable_title",
+        "格式：主题-产品线-作者 · 只动 TARGET，不改 SCAN 源",
+        [
+            sys.executable,
+            "-m",
+            "tools.rename_target_display_titles",
+            "--scope",
+            "target",
+        ],
+        scope="target",
+        danger=True,
+    ),
+    JobSpec(
+        "display_title_rename_dry",
+        "重命名 TARGET 标题（试跑 · 最多 20 篇 · 不写飞书）",
+        "bitable_title",
+        "只预览新旧标题对照 · 不改 wiki",
+        [
+            sys.executable,
+            "-m",
+            "tools.rename_target_display_titles",
+            "--scope",
+            "target",
+            "--dry-run",
+            "--max-documents",
+            "20",
+        ],
+        scope="target",
+        dry_run=True,
+    ),
+    JobSpec(
         "display_title_dry",
-        "归纳新标题（试跑 · 最多 20 篇 · 不写飞书）",
+        "归纳新标题→多维表（试跑 · 最多 20 篇 · 不写飞书）",
         "bitable_title",
         "TARGET · 不改 wiki 原标题",
         [
@@ -254,6 +287,45 @@ JOB_CATALOG: List[JobSpec] = [
         dry_run=True,
     ),
     # --- ops ---
+    JobSpec(
+        "refresh_target",
+        "源 → TARGET 内容刷新（保留整理标题）",
+        "ops",
+        "源有更新时重拷贝；旧副本进废弃夹；不改 SCAN",
+        [sys.executable, "-m", "tools.refresh_target_from_source"],
+        scope="target",
+        danger=True,
+    ),
+    JobSpec(
+        "refresh_target_dry",
+        "源 → TARGET 内容刷新（试跑 · 最多 20 篇）",
+        "ops",
+        "只预览将刷新的映射 · 不写飞书",
+        [
+            sys.executable,
+            "-m",
+            "tools.refresh_target_from_source",
+            "--dry-run",
+            "--limit",
+            "20",
+        ],
+        scope="target",
+        dry_run=True,
+    ),
+    JobSpec(
+        "refresh_target_force",
+        "源 → TARGET 强制全量刷新",
+        "ops",
+        "忽略变更检测 · 重拷全部 copied 映射",
+        [
+            sys.executable,
+            "-m",
+            "tools.refresh_target_from_source",
+            "--force",
+        ],
+        scope="target",
+        danger=True,
+    ),
     JobSpec(
         "reclassify_others",
         "Others 产品线纠偏",

@@ -89,7 +89,9 @@ notepad .env
 | 文档元数据表 | 汇总 / 汇总+分表（TARGET） | 写文档元数据多维表格 |
 | 文档元数据表 | **[扫源] 按 token 分表** / 指定 folder | 三人并行常用；扫源清单 |
 | 文档元数据表 | 试跑 20 篇 | 不写表 |
-| **归纳新标题** | 写入汇总表 / 试跑 | TARGET；「日期-型号或路径-作用」+ Wiki 链接（**不改 wiki**） |
+| **归纳新标题** | 写入汇总表 / 试跑 | TARGET；格式 **主题-产品线-作者**（**不改 wiki**） |
+| **归纳新标题** | **重命名 TARGET 副本标题** / 试跑 | 同上格式**直接改 TARGET wiki 标题**；**不改 SCAN 源** |
+| 运维纠偏 | **源 → TARGET 内容刷新** / 试跑 / 强制全量 | 源有更新时重拷；保留整理标题；旧副本进 `_已废弃_源刷新` |
 | 运维纠偏 | Others 纠偏 / 主题归档 / 附件重试 | 运维专项 |
 
 操作要点：
@@ -109,6 +111,17 @@ python -m tools.enrich_copied_docs --force-metadata --steps metadata_table
 ```
 
 回填时作者取源文档 `creator`，源路径取 SCAN 目录 breadcrumb（经 `SHARED_STATE_DB` 的 `copied_node → source_node` 映射）；**不要**用知识枢纽 TARGET 路径。
+
+源与 TARGET **不做双向同步**。需要跟进源正文变更时，用「源 → TARGET 内容刷新」（单向）：
+
+```bash
+python -m tools.refresh_target_from_source --dry-run --limit 20
+python -m tools.refresh_target_from_source
+# 忽略变更检测、全部重拷：
+python -m tools.refresh_target_from_source --force
+```
+
+策略：重拷源到同一父目录 → 恢复当前 TARGET 标题 → 旧副本移入 `TARGET/_已废弃_源刷新` → 更新共享库映射 → 可选 enrichment。配置：`REFRESH_TARGET_SKIP_UNCHANGED`、`REFRESH_TARGET_OBSOLETE_FOLDER`。
 
 ### 3.2 配置
 

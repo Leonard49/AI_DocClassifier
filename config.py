@@ -189,9 +189,19 @@ DISPLAY_TITLE_BITABLE_PER_TOKEN_PARENT = (
 ).strip().lower()
 DISPLAY_TITLE_USE_LLM_PURPOSE = _env_bool("DISPLAY_TITLE_USE_LLM_PURPOSE", True)
 DISPLAY_TITLE_SKIP_EXISTING = _env_bool("DISPLAY_TITLE_SKIP_EXISTING", False)
+# Rename TARGET wiki titles to display-title format (never touches SCAN source)
+DISPLAY_TITLE_RENAME_SKIP_EXISTING = _env_bool(
+    "DISPLAY_TITLE_RENAME_SKIP_EXISTING", False
+)
 
 # Enrichment backfill skip (per-op in TOOL_OPS_DB)
 ENRICHMENT_SKIP_EXISTING = _env_bool("ENRICHMENT_SKIP_EXISTING", False)
+
+# Source → TARGET content refresh (retire old copy under obsolete folder)
+REFRESH_TARGET_SKIP_UNCHANGED = _env_bool("REFRESH_TARGET_SKIP_UNCHANGED", True)
+REFRESH_TARGET_OBSOLETE_FOLDER = (
+    _env("REFRESH_TARGET_OBSOLETE_FOLDER") or "_已废弃_源刷新"
+)
 
 _MIGRATION_DONE = False
 

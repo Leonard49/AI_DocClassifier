@@ -31,9 +31,9 @@ import config
 from classify.display_title import (
     DisplayTitleRow,
     build_display_title_row,
-    fallback_purpose,
-    purpose_prompt,
-    sanitize_purpose,
+    fallback_theme,
+    sanitize_theme,
+    theme_prompt,
 )
 from classify.llm_rate_limit import LLM_CONCURRENCY, LLM_RATE_LIMITER
 from feishu.bitable import FeishuBitableClient
@@ -50,7 +50,7 @@ from state.display_title_bitable import (
 from state.metadata_bitable import MetadataRecordIndex
 from state.operation_ledger import OP_DISPLAY_TITLE_BITABLE, OperationLedger
 from state.scan_folders import format_folder_table, load_scan_folders, default_scan_folders_path
-from state.shared_state import default_worker_id
+from state.shared_state import SharedCopyState, default_worker_id
 from tools._tool_scope import SCOPE_SCAN, SCOPE_TARGET
 from tools.runner import ToolJob, add_scope_args, ensure_utf8_stdio, write_tool_report
 
@@ -59,7 +59,7 @@ from openai import OpenAI
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="展示标题 → 多维表格（默认只处理 TARGET 下已分类复制文档）"
+        description="展示标题 → 多维表格（格式：主题-产品线-作者；默认只处理 TARGET）"
     )
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--list-folders", action="store_true")
@@ -93,10 +93,10 @@ class PurposeLLM:
         )
 
         messages = [
-            {"role": "system", "content": "只输出一句简洁中文短语，概括文档作用。"},
-            {"role": "user", "content": purpose_prompt(title, content)},
+            {"role": "system", "content": "只输出极短中文主题短语，不要解释。"},
+            {"role": "user", "content": theme_prompt(title, content)},
         ]
-        fallback = fallback_purpose(title, content)
+        fallback = fallback_theme(title, content)
         with LLM_CONCURRENCY:
             for attempt in range(self.max_retries):
                 LLM_RATE_LIMITER.wait()
@@ -105,10 +105,10 @@ class PurposeLLM:
                         model=self.model,
                         messages=messages,
                         temperature=0.2,
-                        max_tokens=48,
+                        max_tokens=32,
                     )
                     raw = (resp.choices[0].message.content or "").strip()
-                    return sanitize_purpose(raw, fallback=fallback)
+                    return sanitize_theme(raw, fallback=fallback)
                 except Exception as e:
                     retryable = isinstance(
                         e,
@@ -123,7 +123,7 @@ class PurposeLLM:
                         and e.status_code in {408, 429, 500, 502, 503, 504}
                     )
                     if not retryable or attempt >= self.max_retries - 1:
-                        print(f"⚠️ 文章作用 LLM 失败 ({title}): {e} → {fallback}")
+                        print(f"⚠️ 文章主题 LLM 失败 ({title}): {e} → {fallback}")
                         return fallback
                     time.sleep(min(2**attempt + random.uniform(0.2, 1.0), 30.0))
         return fallback
@@ -207,7 +207,7 @@ def main() -> int:
         return 1
 
     job = ToolJob(
-        title="展示标题 → 多维表格（不改 wiki 原标题）",
+        title="展示标题 → 多维表格（主题-产品线-作者；不改 wiki）",
         ops=[OP_DISPLAY_TITLE_BITABLE],
         skip_config_key="DISPLAY_TITLE_SKIP_EXISTING",
         require_llm=use_llm,
@@ -269,14 +269,37 @@ def main() -> int:
                 except Exception as exc:
                     print(f"⚠️ get_node 失败 {d.get('title')}: {exc}")
 
+        registry_by_copy: Dict[str, Dict] = {}
+        shared_db = (getattr(config, "SHARED_STATE_DB", None) or "").strip()
+        if shared_db and config.METADATA_TABLE_FETCH_AUTHOR:
+            try:
+                shared = SharedCopyState(
+                    db_path=shared_db,
+                    worker_id=config.WORKER_ID or default_worker_id(),
+                )
+                registry_by_copy = shared.index_by_copied_node()
+                print(f"🔗 共享库映射: {len(registry_by_copy)} 条（用于作者）")
+            except Exception as exc:
+                print(f"⚠️ 打开 SHARED_STATE_DB 失败（作者可能为空）: {exc}")
+
         llm = PurposeLLM() if use_llm else None
-        print("\n🏷️ 生成展示标题…")
+        print("\n🏷️ 生成展示标题（主题-产品线-作者）…")
         rows: List[DisplayTitleRow] = []
         for doc in unique_docs:
             obj = doc.get("obj_token") or doc["node_token"]
             node = doc["node_token"]
             title, content = read_map.get(obj, (doc.get("title") or "", ""))
-            purpose = llm.summarize(title, content) if llm else None
+            theme = llm.summarize(title, content) if llm else None
+
+            author = ""
+            if config.METADATA_TABLE_FETCH_AUTHOR:
+                src = (registry_by_copy.get(node) or {}).get("source_node_token") or ""
+                author_node = src or node
+                try:
+                    author = wiki_meta.get_author_display_name(author_node) or ""
+                except Exception as exc:
+                    print(f"⚠️ 作者解析失败 {title}: {exc}")
+
             row = build_display_title_row(
                 title=title,
                 content=content,
@@ -286,7 +309,8 @@ def main() -> int:
                 or doc.get("source_path")
                 or "",
                 source_folder=doc.get("source_folder_name") or "TARGET",
-                purpose=purpose,
+                theme=theme,
+                author=author,
                 wiki_node=node_map.get(node),
             )
             rows.append(row)

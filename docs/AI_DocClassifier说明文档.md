@@ -61,7 +61,9 @@
 【Tools】默认只处理 TARGET 叶子（未复制源文档不进工具）
   enrich_copied_docs          → 回填贴表 / 附件分隔
   export_doc_metadata_bitable → 文档元数据多维表格
-  export_display_title_bitable→ 归纳新标题多维表格（不改原标题）
+  export_display_title_bitable→ 归纳新标题多维表格（主题-产品线-作者）
+  rename_target_display_titles→ 按同格式重命名 TARGET 标题
+  refresh_target_from_source  → 源有更新时单向重拷 TARGET（保留标题）
   状态：唯一账本 data/tools/tool_ops.db（按 op 独立 skip）
 
 入口：main.py / run_console.py（http://127.0.0.1:8787）
@@ -103,7 +105,7 @@
 | **附件提取** | **`attachment/extractor.py`** | PDF/Word/PPT 附件转文本写回源文档 |
 | 分类 | `classify/llm_tree_classifier.py` | 标签树 + LLM 分类 |
 | 元数据提取 | `classify/doc_metadata.py` | 产品线(tag1)/型号/文档类型等 |
-| 展示标题 | `classify/display_title.py` | 归纳「日期-型号或路径-作用」（不改 wiki） |
+| 展示标题 | `classify/display_title.py` | 归纳「主题-产品线-作者」（可写表或重命名 TARGET） |
 | 分类缓存 | `classify/classify_cache.py` | SQLite → `data/core/classify_cache.db` |
 | **共享去重** | **`state/shared_state.py`** | Core：跨 worker `obj_token` 复制注册表 |
 | **工具账本** | **`state/operation_ledger.py`** | Tools：按 `(文档, op)` 的 skip / `result_ref` |

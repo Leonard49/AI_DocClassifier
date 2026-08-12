@@ -95,7 +95,7 @@
     },
     { id: "enrich", label: "副本增强", hint: "只处理 TARGET 已复制文档" },
     { id: "bitable_meta", label: "文档元数据表", hint: "文档元数据 → 飞书多维表格" },
-    { id: "bitable_title", label: "归纳新标题", hint: "TARGET，不改 wiki 原标题" },
+    { id: "bitable_title", label: "归纳新标题", hint: "多维表格或重命名 TARGET 副本（不改源）" },
     { id: "ops", label: "运维纠偏", hint: "Others / 附件重试" },
   ];
 
