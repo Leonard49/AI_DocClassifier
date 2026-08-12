@@ -1,7 +1,7 @@
 # 架构说明：Core（主流程）与 Tools（侧工具）
 
 > 对应分支：`feature/arch-data-dir-cleanup` · 更新 2026-08-12  
-> 分支变更年表见 [BRANCHES.md](BRANCHES.md) · 目录树见 [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) · 附录流程图见 [说明文档 §附录](AI_DocClassifier说明文档.md#附录各阶段逻辑图)
+> **完整优化时间线** → [BRANCHES.md](BRANCHES.md)（迭代优化日志） · 目录树见 [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) · 流程图见 [说明文档 §附录](AI_DocClassifier说明文档.md#附录各阶段逻辑图)
 
 本文回答：
 
@@ -118,11 +118,11 @@ SCAN 与 TARGET 是**独立副本**，整理侧改标题/贴表不会回写源�
 | 项 | 内容 |
 |----|------|
 | 背景 | 多个 `*_index.db`、导出工具样板重复、根目录 `.db` 噪声 |
-| 做了 | `DATA_DIR`；索引收敛进 `tool_ops`；`ToolJob`；展示标题重命名；源→TARGET 刷新；贴表作者/双路径纠偏 |
+| 基线 | `DATA_DIR`；索引收敛进 `tool_ops`；`ToolJob` |
+| 持续迭代 | **完整时间线以 [BRANCHES.md](BRANCHES.md)「迭代优化日志」为准**（贴表纠偏、展示标题、源刷新、清单可视化加 token、控制台分组等） |
 | 没做 | 不拆 `main.py`；不搬 UNC 共享库；不做 SCAN↔TARGET 双向同步 |
-| 提交 | 见分支 `git log`；文档随功能迭代 |
 
-上一跳：`feature/tool-ops-target-scope`（工具默认 TARGET + 统一账本）。详见 [BRANCHES.md](BRANCHES.md)。
+上一跳：`feature/tool-ops-target-scope`。选型与每次代码优化记账见 [BRANCHES.md](BRANCHES.md)。
 
 ---
 

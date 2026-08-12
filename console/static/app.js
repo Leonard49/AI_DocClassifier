@@ -347,6 +347,7 @@
           <td><input type="text" data-f="assignee" value="${esc(f.assignee || "")}" list="assignees" /></td>
           <td><input type="number" data-f="priority" value="${esc(f.priority ?? 0)}" style="width:5rem" /></td>
           <td><input class="token" type="text" data-f="token" value="${esc(f.token || "")}" /></td>
+          <td><button type="button" class="btn-row-del" data-del="${i}">移除</button></td>
         </tr>`;
       })
       .join("");
@@ -356,6 +357,15 @@
       dl.innerHTML = ["Hydrew", "Jamie", "Hayes"].map((n) => `<option value="${n}">`).join("");
       document.body.appendChild(dl);
     }
+    tb.querySelectorAll("[data-del]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const i = Number(btn.getAttribute("data-del"));
+        folders = collectFolders().filter((_, idx) => idx !== i);
+        renderFolders();
+        fillFolderSelect();
+        showMsg($("#foldersMsg"), "已从表格移除一行，点「保存清单」才会写入文件", false);
+      });
+    });
   }
 
   function collectFolders() {
@@ -383,6 +393,35 @@
     if (cur) sel.value = cur;
   }
 
+  function normalizeToken(raw) {
+    let t = (raw || "").trim();
+    if (!t) return "";
+    const wiki = t.match(/\/wiki\/([A-Za-z0-9_-]+)/i);
+    if (wiki) return wiki[1];
+    // bare token or trailing junk
+    return t.split(/[/?#\s]/)[0].trim();
+  }
+
+  function collectAddPayload() {
+    const priRaw = $("#addPriority").value.trim();
+    return {
+      token: normalizeToken($("#addToken").value),
+      id: $("#addId").value.trim() || null,
+      name: $("#addName").value.trim() || null,
+      assignee: $("#addAssignee").value.trim() || null,
+      priority: priRaw === "" ? null : Number(priRaw),
+      enabled: $("#addEnabled").checked,
+      resolve_wiki: true,
+    };
+  }
+
+  function clearAddForm() {
+    $("#addToken").value = "";
+    $("#addId").value = "";
+    $("#addName").value = "";
+    $("#addPriority").value = "";
+  }
+
   $("#btnReloadFolders").addEventListener("click", () => loadFolders().catch((e) => alert(e.message)));
   $("#btnSaveFolders").addEventListener("click", async () => {
     try {
@@ -400,8 +439,69 @@
     }
   });
 
+  $("#btnPreviewFolder").addEventListener("click", async () => {
+    const btn = $("#btnPreviewFolder");
+    try {
+      setBusy(btn, true);
+      const payload = collectAddPayload();
+      if (!payload.token) throw new Error("请先填写 token");
+      const res = await api("/api/folders/preview", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      const s = res.suggested || {};
+      if (s.id) $("#addId").value = s.id;
+      if (s.name) $("#addName").value = s.name;
+      if (s.assignee && !$("#addAssignee").value.trim()) $("#addAssignee").value = s.assignee;
+      if (s.priority != null && $("#addPriority").value.trim() === "") {
+        $("#addPriority").value = String(s.priority);
+      }
+      let tip = `已解析：${s.name || s.id}`;
+      if (res.wiki?.error) tip += `（飞书：${res.wiki.error}）`;
+      if (res.duplicate_token) tip += ` · 警告：token 已存在于 ${res.duplicate_token}`;
+      if (res.duplicate_id) tip += ` · 警告：id 冲突 ${res.duplicate_id}`;
+      showMsg($("#addFolderMsg"), tip, !!(res.duplicate_token || res.duplicate_id));
+    } catch (e) {
+      showMsg($("#addFolderMsg"), e.message, true);
+    } finally {
+      setBusy(btn, false);
+    }
+  });
+
+  $("#btnAddFolder").addEventListener("click", async () => {
+    const btn = $("#btnAddFolder");
+    try {
+      setBusy(btn, true);
+      const payload = collectAddPayload();
+      if (!payload.token) throw new Error("请先填写 token");
+      const res = await api("/api/folders/add", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      const f = res.folder || {};
+      showMsg(
+        $("#addFolderMsg"),
+        `已添加 ${f.id}（${f.name}）→ 共 ${res.count} 项 · ${res.path}`
+      );
+      clearAddForm();
+      await loadFolders();
+    } catch (e) {
+      showMsg($("#addFolderMsg"), e.message, true);
+    } finally {
+      setBusy(btn, false);
+    }
+  });
+
   async function boot() {
-    await Promise.all([refreshStatus(), loadJobs(), loadConfig(), loadFolders()]);
+    const [status] = await Promise.all([
+      refreshStatus(),
+      loadJobs(),
+      loadConfig(),
+      loadFolders(),
+    ]);
+    if (status?.worker_id && !$("#addAssignee").value.trim()) {
+      $("#addAssignee").value = status.worker_id;
+    }
     const s = await refreshStatus();
     if (s.job?.running) startPolling();
   }

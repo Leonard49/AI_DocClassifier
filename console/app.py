@@ -30,6 +30,8 @@ from console.jobs import JOB_CATEGORY_META, JOB_MANAGER  # noqa: E402
 from state.scan_folders import (  # noqa: E402
     default_scan_folders_path,
     load_scan_folders,
+    next_folder_priority,
+    suggest_folder_id,
 )
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -45,6 +47,17 @@ class EnvSaveRequest(BaseModel):
 class FoldersSaveRequest(BaseModel):
     notes: Optional[str] = None
     folders: List[Dict[str, Any]]
+
+
+class FolderAddRequest(BaseModel):
+    token: str
+    id: Optional[str] = None
+    name: Optional[str] = None
+    assignee: Optional[str] = None
+    priority: Optional[int] = None
+    enabled: bool = True
+    notes: str = ""
+    resolve_wiki: bool = True
 
 
 class JobStartRequest(BaseModel):
@@ -196,6 +209,159 @@ def put_folders(body: FoldersSaveRequest):
     except Exception as exc:
         raise HTTPException(400, f"清单校验失败: {exc}") from exc
     return {"ok": True, "path": path, "count": len(merged)}
+
+
+def _load_folders_file(path: str) -> Dict[str, Any]:
+    if not os.path.isfile(path):
+        return {"version": 1, "notes": "", "folders": []}
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        return {"version": 1, "notes": "", "folders": []}
+    data.setdefault("version", 1)
+    data.setdefault("notes", "")
+    data.setdefault("folders", [])
+    return data
+
+
+def _resolve_wiki_title(token: str) -> Dict[str, str]:
+    """Best-effort Feishu get_node; empty fields if credentials/API fail."""
+    import config
+    from feishu.token_manager import TokenManager
+    from feishu.wiki_meta import WikiMetaClient
+
+    app_id = (getattr(config, "FEISHU_APP_ID", None) or "").strip()
+    secret = (getattr(config, "FEISHU_APP_SECRET", None) or "").strip()
+    if not app_id or not secret:
+        return {"title": "", "error": "未配置 FEISHU_APP_ID / FEISHU_APP_SECRET"}
+    try:
+        tm = TokenManager(app_id, secret)
+        node = WikiMetaClient(tm).get_node(token)
+        title = (node.get("title") or "").strip()
+        return {"title": title, "obj_type": str(node.get("obj_type") or "")}
+    except Exception as exc:
+        return {"title": "", "error": str(exc)}
+
+
+def _build_new_folder_entry(body: FolderAddRequest, path: str) -> Dict[str, Any]:
+    token = (body.token or "").strip()
+    if not token:
+        raise HTTPException(400, "token 不能为空（飞书知识库节点 token）")
+
+    existing = _load_folders_file(path)
+    folders_raw = list(existing.get("folders") or [])
+    for f in folders_raw:
+        if (f.get("token") or "").strip() == token:
+            raise HTTPException(
+                400, f"token 已存在于清单：id={f.get('id')} name={f.get('name')}"
+            )
+
+    wiki_meta: Dict[str, str] = {}
+    name = (body.name or "").strip()
+    if body.resolve_wiki and not name:
+        wiki_meta = _resolve_wiki_title(token)
+        name = (wiki_meta.get("title") or "").strip()
+
+    fid = (body.id or "").strip() or suggest_folder_id(name, token)
+    for f in folders_raw:
+        if (f.get("id") or "").strip() == fid:
+            raise HTTPException(400, f"id 已存在：{fid}（请改 id 后重试）")
+
+    loaded = []
+    try:
+        loaded = load_scan_folders(path) if os.path.isfile(path) else []
+    except Exception:
+        loaded = []
+
+    priority = body.priority
+    if priority is None:
+        priority = next_folder_priority(loaded)
+
+    assignee = (body.assignee or "").strip()
+    if not assignee:
+        import config
+
+        assignee = (getattr(config, "WORKER_ID", None) or "").strip()
+
+    entry = {
+        "id": fid,
+        "name": name or fid,
+        "token": token,
+        "assignee": assignee,
+        "enabled": bool(body.enabled),
+        "priority": int(priority),
+        "notes": (body.notes or "").strip(),
+    }
+    return {"entry": entry, "wiki": wiki_meta, "existing": existing}
+
+
+@app.post("/api/folders/preview")
+def preview_folder(body: FolderAddRequest):
+    """Resolve wiki title / suggested id without writing the file."""
+    path = _scan_folders_path()
+    # Allow preview even if id would collide — still return suggestion
+    token = (body.token or "").strip()
+    if not token:
+        raise HTTPException(400, "token 不能为空")
+    wiki = _resolve_wiki_title(token) if body.resolve_wiki else {}
+    name = (body.name or "").strip() or (wiki.get("title") or "").strip()
+    fid = (body.id or "").strip() or suggest_folder_id(name, token)
+    loaded = []
+    try:
+        loaded = load_scan_folders(path) if os.path.isfile(path) else []
+    except Exception:
+        loaded = []
+    dup_token = next(
+        (f.id for f in loaded if f.token == token),
+        None,
+    )
+    dup_id = next((f.id for f in loaded if f.id == fid), None)
+    return {
+        "ok": True,
+        "path": path,
+        "suggested": {
+            "id": fid,
+            "name": name or fid,
+            "token": token,
+            "assignee": (body.assignee or "").strip()
+            or (__import__("config").WORKER_ID or ""),
+            "priority": body.priority
+            if body.priority is not None
+            else next_folder_priority(loaded),
+            "enabled": bool(body.enabled),
+            "notes": (body.notes or "").strip(),
+        },
+        "wiki": wiki,
+        "duplicate_token": dup_token,
+        "duplicate_id": dup_id,
+    }
+
+
+@app.post("/api/folders/add")
+def add_folder(body: FolderAddRequest):
+    """Append one scan folder by wiki node token and persist scan_folders.json."""
+    path = _scan_folders_path()
+    built = _build_new_folder_entry(body, path)
+    entry = built["entry"]
+    existing = built["existing"]
+    folders_raw = list(existing.get("folders") or [])
+    folders_raw.append(entry)
+    existing["folders"] = folders_raw
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(existing, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    try:
+        load_scan_folders(path)
+    except Exception as exc:
+        raise HTTPException(400, f"清单校验失败: {exc}") from exc
+    return {
+        "ok": True,
+        "path": path,
+        "folder": entry,
+        "count": len(folders_raw),
+        "wiki": built.get("wiki") or {},
+    }
 
 
 @app.get("/api/jobs/catalog")

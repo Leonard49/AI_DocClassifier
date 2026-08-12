@@ -4,7 +4,7 @@
 > 更新日期：2026-08-12  
 > 地址：http://127.0.0.1:8787（仅本机）  
 > 启动：双击 `启动控制台.bat`，或 `python run_console.py`  
-> 架构（主流程 vs 侧工具）：[ARCHITECTURE.md](ARCHITECTURE.md)
+> 架构（主流程 vs 侧工具）：[ARCHITECTURE.md](ARCHITECTURE.md) · **迭代优化日志**：[BRANCHES.md](BRANCHES.md)
 
 控制台用于：**改配置、改清单分工、按分组一键跑主流程 / 副本增强 / 文档元数据表 / 归纳新标题 / 运维纠偏并看实时日志**。不替代飞书权限与 `.env` 必填项。
 
@@ -150,7 +150,19 @@ python -m tools.refresh_target_from_source --force
 
 ### 3.3 清单分工
 
-编辑 `scan_folders.json`（路径以配置里 `SCAN_FOLDERS_FILE` 为准）。
+编辑 `scan_folders.json`（路径以配置里 `SCAN_FOLDERS_FILE` 为准），**推荐在控制台「清单分工」页操作**，不必手改 JSON。
+
+#### 添加新的 SCAN 目录（token）
+
+1. 打开飞书知识库目标文件夹，从 URL 复制节点 token（`…/wiki/` 后面一段；也可直接粘贴整段 URL）  
+2. 「清单分工」→ **添加 SCAN 目录** → 粘贴 token  
+3. （可选）点 **从飞书解析**：自动填 `name` / 建议 `id` / `priority`  
+4. 填 `assignee`（须与对方 `WORKER_ID` 一致；默认可为当前 worker）  
+5. 点 **添加并保存** → 立刻写入清单文件  
+
+同一 token / id 不可重复。解析需 `.env` 中飞书 App 可用，且对节点有读权限。
+
+#### 改现有条目
 
 可改：
 
@@ -159,7 +171,9 @@ python -m tools.refresh_target_from_source --force
 - `priority`：排序  
 - `token` / `name` / `id`：一般不要乱改 token  
 
-改完点 **保存清单**。当前仓库示例分工：
+改完点 **保存清单**。行末「移除」只从表格删掉，需再保存才落盘。
+
+当前仓库示例分工：
 
 | 人 | 范围（约） |
 |----|------------|

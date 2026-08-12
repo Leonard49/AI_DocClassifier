@@ -1,8 +1,19 @@
 # 分支变更记录
 
 > 记录各功能分支相对 `master` 的重要变化，便于选型与合并。  
-> **当前推荐落地分支：`feature/arch-data-dir-cleanup`**（2026-08-12）  
-> **架构边界（Core vs Tools）与本轮优化摘要**：[ARCHITECTURE.md](ARCHITECTURE.md)
+> **当前推荐落地分支：`feature/arch-data-dir-cleanup`**（持续迭代中 · 见下方优化日志）  
+> **架构边界（Core vs Tools）**：[ARCHITECTURE.md](ARCHITECTURE.md) · **控制台**：[CONSOLE.md](CONSOLE.md)
+
+### 如何维护本文件（必读）
+
+代码体量变大后，**每次有意义的代码/产品优化都要在本文件「当前推荐分支」的「迭代优化日志」里追加一行**（日期 + 一句话 + 关键提交/文件）。不要只改功能代码却不记账。
+
+| 要记 | 可省略 |
+|------|--------|
+| 新工具 / 新控制台能力 / 行为语义变更 / 重要 bugfix | 纯 typo、仅格式化、临时调试 |
+| 配置项增删、账本 op 增删 | 与功能无关的文档微调（可并入同一次日志） |
+
+追加位置：下文 **`feature/arch-data-dir-cleanup` → 迭代优化日志**（**新记录写在表格最上方**）。
 
 ---
 
@@ -169,6 +180,8 @@
 
 **关联文件：** `console/`、`run_console.py`、`启动控制台.bat`
 
+> 后续控制台增强（任务分组、增量/全量、清单可视化加 token 等）记在 **`arch-data-dir-cleanup` 迭代日志**，不再开新分支名。
+
 ---
 
 ## `feature/doc-enrichment`（文档增强管道）
@@ -182,7 +195,7 @@
 | enrichment 插件 | `enrichment/`：复制后 / 回填可插拔步骤 |
 | 默认步骤 | 贴元数据表、附件分隔符（均幂等） |
 | 旧副本回填 | `tools/enrich_copied_docs.py`（默认 TARGET） |
-| 字段语义（后续纠偏） | 作者/源路径←SCAN；分类路径←tag 或 TARGET 面包屑；见 arch-data-dir-cleanup |
+| 字段语义（后续纠偏） | 作者/源路径←SCAN；分类路径←tag 或 TARGET 面包屑；见 arch 迭代日志 |
 | 开关 | `ENABLE_METADATA_TABLE` / `ENABLE_ATTACHMENT_SEPARATOR` |
 
 **关联文件：** `enrichment/`、`tools/enrich_copied_docs.py`、`main.py`（`enrich_after_copy`）
@@ -199,7 +212,7 @@
 |------|------|
 | 工具文档宇宙 | 默认只扫 `TARGET_PARENT_TOKEN`；未分类复制的源文档不进工具 |
 | 统一账本 | `tool_ops.db`（`OperationLedger`）：按 `(文档, op)` 独立记录 |
-| 操作互不影响 | `metadata_table` / `attachment_separator` / `metadata_bitable` / `display_title_bitable` / `display_title_rename` / `target_content_refresh` |
+| 操作互不影响 | 各 Tools op 独立 skip（完整列表见 arch 迭代日志） |
 | 主流程不变 | `shared_copy_state` / `scan_snapshot` 仍只服务分类复制 |
 | 兼容 | `--scope scan` 可恢复扫源清单 |
 
@@ -207,11 +220,14 @@
 
 ---
 
-## `feature/arch-data-dir-cleanup`（数据目录 + 账本收敛）
+## `feature/arch-data-dir-cleanup`（当前推荐 · 持续迭代）
 
 **基于：** `feature/tool-ops-target-scope`
 
-**主要变化：**
+本分支是**生产落地点**：在 TARGET 工具 + `tool_ops` 之上，收敛 `data/` 布局，并持续叠加控制台、贴表语义、展示标题、源刷新等优化。  
+**不要只看「主要能力」摘要——以「迭代优化日志」为准。**
+
+### 主要能力（基线，`d19d7c1` 起）
 
 | 能力 | 说明 |
 |------|------|
@@ -219,13 +235,50 @@
 | 旧库迁移 | 根目录 `*.db` 可自动迁入 `data/`（`AUTO_MIGRATE_DATA_DIR`） |
 | 账本唯一 | bitable `record_id` 写入 `operations.result_ref`；废弃独立 `*_index.db` |
 | ToolJob | `tools/runner.py` 统一 scope / skip / 报告 |
-| 控制台 | 运行页分组：主流程 / 副本增强 / 文档元数据表 / 归纳新标题 / 运维纠偏；增量 vs 全量重扫 |
-| 贴表字段纠偏 | 回填作者/源路径取 **SCAN 源**（`SHARED_STATE_DB`）；**分类路径**取 TARGET 面包屑；`--force-metadata` 重贴 |
-| 展示标题 | 格式 **主题-产品线-作者**；可写 bitable 或 `rename_target_display_titles` 改 TARGET 标题 |
-| 源→TARGET 刷新 | `refresh_target_from_source`：单向重拷、保留整理标题、旧副本进 `_已废弃_源刷新` |
-| 文档 | Core vs Tools 边界；根 shim / `attachment_extractors/` 标明遗留 |
+| 文档边界 | Core vs Tools；根 shim / `attachment_extractors/` 标明遗留 |
 
-**关联文件：** `util/paths.py`、`config.py`、`tools/runner.py`、`classify/display_title.py`、`tools/rename_target_display_titles.py`、`tools/refresh_target_from_source.py`、`tools/enrich_copied_docs.py`
+### 迭代优化日志（新 → 旧）
+
+> 约定：日期为大致落地日；SHA 为该能力对应的主要提交（可 `git show <sha>`）。
+
+| 日期 | 优化内容 | 提交 / 关键 |
+|------|----------|-------------|
+| 2026-08-12 | **控制台清单可视化添加 SCAN token**：粘贴 wiki token（或 URL）→ 可选飞书解析 name/id →「添加并保存」写入 `scan_folders.json`；行可移除后再保存。不再必须手改 JSON。API：`POST /api/folders/preview`、`POST /api/folders/add`。同步建立 BRANCHES「迭代优化日志」记账约定 | `29edcdc` · `console/app.py` · `console/static/*` · `state/scan_folders.py` · [CONSOLE.md](CONSOLE.md) · [BRANCHES.md](BRANCHES.md) |
+| 2026-08-12 | **文档同步**：贴表双路径、展示标题、源刷新、作者排障等写回 README / QUICK_START / CONSOLE / 分类准则 / 说明文档 / 增量方案对比 | `844ee66` |
+| 2026-08-12 | **贴表「分类路径」回填**：enrichment 无 `tag` 时用 TARGET 面包屑 `target_path`；产品线可回退路径第一段；`--force-metadata` 重贴 | `1f94b61` · `enrichment/*` · `classify/doc_metadata.py` · `tools/enrich_copied_docs.py` |
+| 2026-08-12 | **归纳新标题格式**改为 **主题-产品线-作者**；新增 `rename_target_display_titles`（只改 TARGET）；**源→TARGET 单向内容刷新** `refresh_target_from_source`（保留整理标题，旧副本进 `_已废弃_源刷新`）；ops：`display_title_rename` / `target_content_refresh` | `d8c03cd` · `classify/display_title.py` · `tools/rename_*` · `tools/refresh_*` · `feishu/wiki_meta.py` |
+| 2026-08-12 | **控制台任务分组对齐**流程：主流程 / 副本增强 / 文档元数据表 / 归纳新标题 / 运维纠偏；文档与文案统一 | `39c9d55` |
+| 2026-08-12 | **BRANCHES 谱系补全**：列出全部 feature 分支与选用建议 | `5de0146` |
+| 2026-08-11 | **贴表作者/源路径纠偏**：经 `SHARED_STATE_DB` 还原 SCAN 源；作者取源 `creator`（需通讯录只读）；禁止把 TARGET 枢纽路径当源路径；`--force-metadata` | `38f1040` · `tools/enrich_copied_docs.py` · `feishu/wiki_meta.py` |
+| 2026-08-11 | **工具运行日志 + 控制台日志不断流**：`maybe_setup_run_log`；ring buffer 用绝对 `log_seq`，避免 UI「卡住」 | `c5d0831` · `tools/runner.py` · `console/jobs.py` |
+| 2026-08-11 | **主流程任务标注【增量更新】/【全量重扫】**；全量经 `FORCE_RESCAN` env override | `de02426` · `console/jobs.py` |
+| 2026-08-11 | **控制台按 Core/Tools 工作流重排任务**；配置保存反馈修复 | `d10ec8e` |
+| 2026-08-07 | **流程图与说明文档**端到端同步 Core/Tools 协作 | `8c832a2` |
+| 2026-08-07 | **架构文档**：Core vs Tools；控制台「归纳新标题」任务说明 | `1a3c77a` · [ARCHITECTURE.md](ARCHITECTURE.md) |
+| 2026-08-07 | **基线落地**：`DATA_DIR` + `tool_ops` 收敛 + ToolJob | `d19d7c1` · `util/paths.py` · `config.py` · `tools/runner.py` |
+
+### 当前 Tools 账本 op（互不影响）
+
+| op | 工具 / 场景 |
+|----|-------------|
+| `metadata_table` | enrichment 贴「文档元数据」表 |
+| `attachment_separator` | enrichment 附件分隔符 |
+| `metadata_bitable` | `export_doc_metadata_bitable` |
+| `display_title_bitable` | `export_display_title_bitable`（写表，不改 wiki） |
+| `display_title_rename` | `rename_target_display_titles`（改 TARGET 标题） |
+| `target_content_refresh` | `refresh_target_from_source`（源→TARGET 重拷） |
+
+### 贴表字段语义（现行）
+
+| 字段 | 来源 |
+|------|------|
+| 作者 | SCAN 源 `creator` → 通讯录显示名 |
+| 源路径 | SCAN 目录 breadcrumb（`SHARED_STATE_DB`） |
+| 分类路径 | 复制时用分类 `tag`；回填用 TARGET `target_path` |
+
+### 关联文件（本分支累计）
+
+`util/paths.py`、`config.py`、`tools/runner.py`、`console/`、`enrichment/`、`classify/display_title.py`、`classify/doc_metadata.py`、`tools/enrich_copied_docs.py`、`tools/export_display_title_bitable.py`、`tools/rename_target_display_titles.py`、`tools/refresh_target_from_source.py`、`state/scan_folders.py`、`state/operation_ledger.py`、`docs/*`
 
 ---
 
@@ -243,18 +296,20 @@ master
                                       └── feature/console-ui              （可视化控制台；并合入 bitable 导出）
                                             └── feature/doc-enrichment    （enrichment 插件 + 旧副本回填）
                                                   └── feature/tool-ops-target-scope   （工具默认 TARGET + tool_ops 账本）
-                                                        └── feature/arch-data-dir-cleanup  ← 当前推荐
-                                                              （data/ + 账本收敛 + 展示标题重命名
-                                                               + 源→TARGET 单向刷新 + 贴表路径纠偏）
+                                                        └── feature/arch-data-dir-cleanup  ← 当前推荐（持续迭代）
+                                                              · data/ + tool_ops 收敛
+                                                              · 控制台分组 / 增量·全量 / 清单加 token
+                                                              · 贴表作者·双路径纠偏
+                                                              · 展示标题重命名 + 源→TARGET 刷新
 ```
 
 ## 选用建议
 
 | 场景 | 推荐分支 |
 |------|----------|
-| **生产推荐（data/ + 统一账本 + TARGET 工具）** | **`feature/arch-data-dir-cleanup`** |
+| **生产推荐（持续更新看本文件迭代日志）** | **`feature/arch-data-dir-cleanup`** |
 | 上一版（TARGET 工具，根目录 .db） | `feature/tool-ops-target-scope` |
-| 图形化配置 + enrichment | `feature/doc-enrichment` |
+| 图形化配置 + enrichment（较旧） | `feature/doc-enrichment` |
 
 ## 切换与更新
 
@@ -263,3 +318,5 @@ git fetch origin
 git checkout feature/arch-data-dir-cleanup
 git pull origin feature/arch-data-dir-cleanup
 ```
+
+拉完后建议打开本文件「迭代优化日志」顶部几行，确认本地已知最新能力。

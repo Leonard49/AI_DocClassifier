@@ -43,7 +43,7 @@
 **Tools（侧工具，`python -m tools.*` / 控制台）**
 
 7. 对 **TARGET 下已复制文档**做旁路能力：文档元数据 → 多维表格、**归纳新标题**（写表或重命名 TARGET）、旧副本增强回填、**源→TARGET 按需刷新**、Others 纠偏等
-8. 可用**本地 Web 控制台**配置参数、改清单分工、一键跑任务看日志
+8. 可用**本地 Web 控制台**配置参数、改清单分工（可粘贴 SCAN token 添加目录）、一键跑任务看日志
 
 主流程与侧工具的边界、状态库、扩展约定见 **[ARCHITECTURE.md](ARCHITECTURE.md)**。
 
@@ -71,8 +71,8 @@
 
 ### 1.3 分支说明与优化记录
 
-- **选型与每分支变更表**：[docs/BRANCHES.md](BRANCHES.md)  
-- **本轮架构优化（data/ + 账本收敛 + ToolJob）**：见 BRANCHES 中 `feature/arch-data-dir-cleanup`，摘要见 [ARCHITECTURE.md §2](ARCHITECTURE.md#2-本轮优化记录featurearch-data-dir-cleanup)
+- **选型与每分支变更表 + 当前分支迭代优化日志**：[docs/BRANCHES.md](BRANCHES.md)（**代码有优化必追加日志行**）  
+- **本轮架构优化（data/ + 账本收敛 + ToolJob）**：见 BRANCHES 中 `feature/arch-data-dir-cleanup`，摘要见 [ARCHITECTURE.md §4](ARCHITECTURE.md#4-本轮优化记录featurearch-data-dir-cleanup)
 
 | 分支 | 说明 |
 |------|------|
@@ -87,7 +87,7 @@
 | `feature/console-ui` | 本地 Web 控制台 |
 | `feature/doc-enrichment` | enrichment 插件 + 旧副本回填 |
 | `feature/tool-ops-target-scope` | 工具默认 TARGET + `tool_ops` 账本 |
-| **`feature/arch-data-dir-cleanup`** | **DATA_DIR + 账本收敛 + ToolJob（当前推荐）** |
+| **`feature/arch-data-dir-cleanup`** | **DATA_DIR + 持续迭代（贴表/标题/刷新/清单加 token…）· 当前推荐 · 见 BRANCHES 日志** |
 
 ---
 ## 二、项目结构
@@ -316,7 +316,7 @@ CLASSIFY_WORKERS=3
 
 | 参数 / 文件 | 说明 |
 |-------------|------|
-| `scan_folders.json` | 全部源目录 `id` / `name` / `token` / `assignee` / `enabled` |
+| `scan_folders.json` | 全部源目录 `id` / `name` / `token` / `assignee` / `enabled`（控制台「清单分工」可可视化添加） |
 | `SCAN_FOLDERS_FILE` | 清单路径，默认 `scan_folders.json`；可指到共享盘 |
 | `WORKER_ID` | 须与清单 `assignee` 一致，供 `--all-assigned` 过滤 |
 

@@ -1,7 +1,7 @@
 # 项目结构
 
 > 对应分支：`feature/arch-data-dir-cleanup` · 更新 2026-08-12  
-> **主流程 vs 侧工具、本轮优化说明** → [ARCHITECTURE.md](ARCHITECTURE.md) · 分支年表 → [BRANCHES.md](BRANCHES.md)
+> **主流程 vs 侧工具** → [ARCHITECTURE.md](ARCHITECTURE.md) · **迭代优化日志** → [BRANCHES.md](BRANCHES.md)
 
 ## Core vs Tools
 

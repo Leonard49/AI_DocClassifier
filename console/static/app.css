@@ -263,6 +263,49 @@ td input[type="text"], td input[type="number"], td select {
 }
 td .token { font-family: var(--mono); font-size: 0.72rem; }
 
+.add-folder-box {
+  margin: 1rem 0 0.25rem;
+  padding: 0.9rem 1rem 1rem;
+  border: 1px dashed rgba(212, 163, 92, 0.45);
+  border-radius: 12px;
+  background: rgba(14, 21, 20, 0.45);
+}
+.add-folder-box h3 {
+  margin: 0 0 0.35rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+.add-folder-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0.75rem;
+  margin: 0.75rem 0;
+}
+.add-folder-grid .field span {
+  display: block;
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-bottom: 0.3rem;
+}
+.add-folder-grid .field.check {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+.add-folder-grid .field.check input { width: auto; align-self: flex-start; }
+.btn-row-del {
+  font: inherit;
+  font-size: 0.75rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 8px;
+  border: 1px solid rgba(224, 107, 92, 0.45);
+  background: transparent;
+  color: var(--danger);
+  cursor: pointer;
+}
+
 .msg {
   margin: 0.5rem 0 0.85rem; padding: 0.65rem 0.8rem; border-radius: 10px;
   background: rgba(61,191,154,0.12); border: 1px solid rgba(61,191,154,0.35); color: var(--accent-2);

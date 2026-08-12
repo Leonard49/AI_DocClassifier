@@ -143,10 +143,34 @@ def format_folder_table(
     return "\n".join(lines)
 
 
+def suggest_folder_id(name: str, token: str = "") -> str:
+    """Build a stable-ish id from wiki title / token for scan_folders.json."""
+    import re
+
+    text = (name or "").strip()
+    text = re.sub(r"\s+", "-", text)
+    text = re.sub(r"[^\w.\u4e00-\u9fff\-]+", "", text, flags=re.UNICODE)
+    text = re.sub(r"-{2,}", "-", text)
+    text = re.sub(r"\.-", ".", text)
+    text = text.strip("-._")
+    if not text:
+        raw = (token or "folder").strip()
+        text = raw[:24] if raw else "folder"
+    return text[:80]
+
+
+def next_folder_priority(folders: Sequence[ScanFolder], step: int = 10) -> int:
+    if not folders:
+        return step
+    return max(int(f.priority) for f in folders) + step
+
+
 __all__ = [
     "ScanFolder",
     "default_scan_folders_path",
     "load_scan_folders",
     "filter_folders",
     "format_folder_table",
+    "suggest_folder_id",
+    "next_folder_priority",
 ]
