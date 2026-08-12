@@ -110,7 +110,7 @@ python -m tools.enrich_copied_docs
 python -m tools.enrich_copied_docs --force-metadata --steps metadata_table
 ```
 
-回填时作者取源文档 `creator`，源路径取 SCAN 目录 breadcrumb（经 `SHARED_STATE_DB` 的 `copied_node → source_node` 映射）；**不要**用知识枢纽 TARGET 路径。
+回填时作者取源文档 `creator`，源路径取 SCAN 目录 breadcrumb（经 `SHARED_STATE_DB` 的 `copied_node → source_node` 映射）；**分类路径**取 TARGET 目录面包屑（`target_path`）。**不要**把知识枢纽路径误当作源路径。
 
 源与 TARGET **不做双向同步**。需要跟进源正文变更时，用「源 → TARGET 内容刷新」（单向）：
 

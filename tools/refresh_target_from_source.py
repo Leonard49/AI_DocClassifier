@@ -365,6 +365,9 @@ def main() -> int:
                             )
                         except Exception:
                             pass
+                    target_path = wiki_meta.build_folder_path(
+                        new_copy, stop_at_tokens=[target_root]
+                    )
                     results = enrich_after_copy(
                         tm,
                         target_node_token=new_copy,
@@ -372,6 +375,7 @@ def main() -> int:
                         obj_token=obj,
                         source_node_token=src_node,
                         source_path=row.get("source_path") or "",
+                        target_path=target_path,
                         content=content,
                         author=author,
                         enable_metadata_table=config.ENABLE_METADATA_TABLE,

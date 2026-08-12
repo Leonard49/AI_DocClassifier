@@ -277,7 +277,8 @@ def main() -> int:
                 print(
                     f"  {i}. {d.get('title') or ''} | "
                     f"target={node} | src={fields['source_node_token'] or '-'} | "
-                    f"path={fields['source_path'] or '-'} | "
+                    f"src_path={fields['source_path'] or '-'} | "
+                    f"classify={d.get('target_path') or '-'} | "
                     f"author={fields['author'] or '-'} | "
                     f"registry={fields['from_registry']}"
                 )
@@ -329,6 +330,7 @@ def main() -> int:
                 print(
                     f"  源节点={fields['source_node_token'] or '-'} | "
                     f"源路径={fields['source_path'] or '-'} | "
+                    f"分类路径={doc.get('target_path') or '-'} | "
                     f"作者={fields['author'] or '-'}"
                 )
 
@@ -347,6 +349,7 @@ def main() -> int:
                 obj_token=obj,
                 source_node_token=fields["source_node_token"],
                 source_path=fields["source_path"],
+                target_path=(doc.get("target_path") or "").strip(),
                 content=content,
                 tag=None,
                 author=fields["author"],

@@ -189,6 +189,7 @@ def resolve_product_line(
     content: str = "",
     *,
     tag: Optional[Dict] = None,
+    classify_path: str = "",
 ) -> str:
     from_tag = product_line_from_tag(tag)
     if from_tag:
@@ -196,6 +197,12 @@ def resolve_product_line(
     line = detect_product_line(title, content)
     if line:
         return line
+    # Backfill: first segment of TARGET/classify breadcrumb (e.g. Cellular / …)
+    path = (classify_path or "").strip()
+    if path:
+        first = path.split(" / ")[0].strip()
+        if first:
+            return first
     return DEFAULT_PRODUCT_LINE
 
 
@@ -216,19 +223,23 @@ def extract_doc_metadata(
     author: str = "",
     doc_type: Optional[str] = None,
     tag: Optional[Dict] = None,
+    classify_path: str = "",
 ) -> DocMetadata:
     dtype = doc_type or classify_doc_type_by_rules(title, content) or DEFAULT_DOC_TYPE
+    path = format_classify_path(tag) or (classify_path or "").strip()
     return DocMetadata(
         title=title or "",
         obj_token=obj_token or "",
         node_token=node_token or "",
-        product_line=resolve_product_line(title, content, tag=tag),
+        product_line=resolve_product_line(
+            title, content, tag=tag, classify_path=path
+        ),
         modules=format_module_models(title, content),
         doc_type=dtype,
         author=author or "",
         source_folder=source_folder or "",
         source_path=source_path or "",
-        classify_path=format_classify_path(tag),
+        classify_path=path,
         wiki_url=build_wiki_url(node_token),
     )
 

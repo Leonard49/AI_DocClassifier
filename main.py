@@ -44,6 +44,7 @@ from classify.llm_tree_classifier import (
     is_excluded_report_tag,
 )
 from classify.module_product_map import detect_product_line
+from classify.doc_metadata import format_classify_path
 from feishu.read_doc import FeishuDocumentReader
 from util.run_logging import setup_run_log
 from state.scan_folders import (
@@ -541,6 +542,7 @@ def process_single_document(
                 obj_token=obj_token,
                 source_node_token=node_token,
                 source_path=source_path or "",
+                target_path=format_classify_path(tag),
                 content=content or "",
                 tag=tag,
                 author=author or "",

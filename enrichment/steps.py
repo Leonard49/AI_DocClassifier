@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from classify.doc_metadata import classify_doc_type_by_rules, extract_doc_metadata
+from classify.doc_metadata import classify_doc_type_by_rules, extract_doc_metadata, format_classify_path
 from enrichment.base import EnrichmentContext, StepResult
 from enrichment.detect import (
     batch_delete_root_children,
@@ -64,6 +64,8 @@ class MetadataTableStep:
         source_folder = ""
         if source_path:
             source_folder = source_path.split(" / ")[0].strip()
+        # Prefer LLM tag path; backfill has no tag → use TARGET folder breadcrumb
+        classify_path = format_classify_path(tag) or (ctx.target_path or "").strip()
         meta = extract_doc_metadata(
             title=ctx.title or "",
             content=ctx.content or "",
@@ -74,6 +76,7 @@ class MetadataTableStep:
             author=ctx.author or "",
             doc_type=classify_doc_type_by_rules(ctx.title or "", ctx.content or ""),
             tag=tag,
+            classify_path=classify_path,
         )
         ok = self._inserter.insert_from_metadata(
             meta, wiki_node_token=ctx.target_node_token

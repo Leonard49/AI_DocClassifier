@@ -16,6 +16,8 @@ class EnrichmentContext:
     obj_token: str = ""  # source or copy obj_token when known
     source_node_token: str = ""
     source_path: str = ""
+    # TARGET hub breadcrumb (L1/L2/…); used as 分类路径 when tag is absent
+    target_path: str = ""
     content: str = ""
     tag: Optional[Dict[str, Any]] = None
     author: str = ""
