@@ -526,15 +526,30 @@ def process_single_document(
             ENABLE_METADATA_TABLE or ENABLE_ATTACHMENT_SEPARATOR
         ):
             author = ""
+            original_title = doc_title or ""
+            source_created_at = ""
+            source_created_ms = 0
             if (
                 ENABLE_METADATA_TABLE
-                and METADATA_TABLE_FETCH_AUTHOR
                 and wiki_meta is not None
             ):
                 try:
-                    author = wiki_meta.get_author_display_name(node_token)
+                    ident = wiki_meta.source_identity(node_token)
+                    if ident.get("title"):
+                        original_title = ident["title"]
+                    source_created_at = ident.get("created_at") or ""
+                    source_created_ms = int(ident.get("created_ms") or 0)
                 except Exception as exc:
-                    print(f"⚠️ 作者解析失败: {exc}")
+                    print(f"⚠️ 源文档身份读取失败: {exc}")
+                if METADATA_TABLE_FETCH_AUTHOR:
+                    try:
+                        author = wiki_meta.get_author_display_name(node_token, source_path=source_path or "")
+                    except Exception as exc:
+                        print(f"⚠️ 作者解析失败: {exc}")
+                if not author:
+                    from classify.display_title import author_from_source_path
+
+                    author = author_from_source_path(source_path or "")
             results = enrich_after_copy(
                 token_manager,
                 target_node_token=copied_node_token,
@@ -546,6 +561,9 @@ def process_single_document(
                 content=content or "",
                 tag=tag,
                 author=author or "",
+                original_title=original_title,
+                source_created_at=source_created_at,
+                source_created_ms=source_created_ms,
                 enable_metadata_table=ENABLE_METADATA_TABLE,
                 enable_attachment_separator=ENABLE_ATTACHMENT_SEPARATOR,
             )

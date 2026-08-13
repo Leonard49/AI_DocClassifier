@@ -100,20 +100,28 @@ class DocMetadata:
     source_path: str
     classify_path: str
     wiki_url: str
+    original_title: str = ""
+    source_created_at: str = ""
+    source_created_ms: int = 0
+    theme: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
 
     def table_rows(self) -> List[Tuple[str, str]]:
-        """Key/value rows for the inline metadata table."""
+        """Key/value rows for the inline metadata table (source identity first)."""
+        original = self.original_title or self.title or "-"
         return [
+            ("原文档名称", original),
+            ("文章主题", self.theme or "-"),
+            ("源文档路径", self.source_path or "-"),
+            ("作者", self.author or "-"),
             ("产品线", self.product_line or DEFAULT_PRODUCT_LINE),
+            ("源文档创建时间", self.source_created_at or "-"),
             ("模块型号", self.modules or "-"),
             ("文档类型", self.doc_type or DEFAULT_DOC_TYPE),
-            ("作者", self.author or "-"),
             ("分类路径", self.classify_path or "-"),
             ("来源文件夹", self.source_folder or "-"),
-            ("源路径", self.source_path or "-"),
         ]
 
 
@@ -224,9 +232,43 @@ def extract_doc_metadata(
     doc_type: Optional[str] = None,
     tag: Optional[Dict] = None,
     classify_path: str = "",
+    original_title: str = "",
+    source_created_at: str = "",
+    source_created_ms: int = 0,
+    theme: Optional[str] = None,
+    llm_module: str = "",
 ) -> DocMetadata:
+    from classify.display_title import (
+        fallback_theme,
+        resolve_author,
+        sanitize_author,
+        sanitize_llm_module,
+        strip_metadata_preamble,
+    )
+
     dtype = doc_type or classify_doc_type_by_rules(title, content) or DEFAULT_DOC_TYPE
     path = format_classify_path(tag) or (classify_path or "").strip()
+    body = strip_metadata_preamble(content)
+    theme_src = (original_title or title or "").strip()
+    if theme is None:
+        theme_text = fallback_theme(theme_src, body)
+    else:
+        theme_text = (theme or "").strip() or fallback_theme(theme_src, body)
+
+    modules = format_module_models(title, body)
+    extra = sanitize_llm_module(llm_module)
+    if extra:
+        tokens = [t.strip() for t in modules.split(",") if t.strip()]
+        upper = {t.upper() for t in tokens}
+        if extra.upper() not in upper:
+            tokens.insert(0, extra)
+        modules = ", ".join(tokens)
+
+    raw_author = resolve_author(author, source_path)
+    author_text = sanitize_author(raw_author) if raw_author else ""
+    if author_text == "未知作者":
+        author_text = ""
+
     return DocMetadata(
         title=title or "",
         obj_token=obj_token or "",
@@ -234,13 +276,17 @@ def extract_doc_metadata(
         product_line=resolve_product_line(
             title, content, tag=tag, classify_path=path
         ),
-        modules=format_module_models(title, content),
+        modules=modules,
         doc_type=dtype,
-        author=author or "",
+        author=author_text,
         source_folder=source_folder or "",
         source_path=source_path or "",
         classify_path=path,
         wiki_url=build_wiki_url(node_token),
+        original_title=(original_title or title or "").strip(),
+        source_created_at=(source_created_at or "").strip(),
+        source_created_ms=int(source_created_ms or 0),
+        theme=theme_text,
     )
 
 

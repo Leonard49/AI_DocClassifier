@@ -21,6 +21,9 @@ class EnrichmentContext:
     content: str = ""
     tag: Optional[Dict[str, Any]] = None
     author: str = ""
+    original_title: str = ""
+    source_created_at: str = ""
+    source_created_ms: int = 0
     # Optional pre-built helpers injected by runner
     extras: Dict[str, Any] = field(default_factory=dict)
 

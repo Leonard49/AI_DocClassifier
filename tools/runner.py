@@ -109,6 +109,7 @@ class ToolJob:
         require_target: bool = True,
         require_scan_source: bool = False,
         max_documents_attr: str = "max_documents",
+        keep_date_prefixed_titles: bool = False,
     ):
         self.title = title
         self.ops = list(ops)
@@ -117,6 +118,7 @@ class ToolJob:
         self.require_target = require_target
         self.require_scan_source = require_scan_source
         self.max_documents_attr = max_documents_attr
+        self.keep_date_prefixed_titles = keep_date_prefixed_titles
 
     def validate(self, *, require_llm: Optional[bool] = None) -> None:
         config.validate(
@@ -169,8 +171,33 @@ class ToolJob:
         skipped = 0
         if skip_existing and self.ops and docs:
             before = len(docs)
-            docs = ledger.filter_pending(docs, self.ops, require_all_ops=True)
-            skipped = before - len(docs)
+            pending = ledger.filter_pending(docs, self.ops, require_all_ops=True)
+            if getattr(self, "keep_date_prefixed_titles", False):
+                from classify.display_title import title_has_leading_date_noise
+
+                pending_ids = {
+                    (d.get("obj_token") or "") + "|" + (d.get("node_token") or "")
+                    for d in pending
+                }
+                extra = [
+                    d
+                    for d in docs
+                    if title_has_leading_date_noise(d.get("title") or "")
+                    and (
+                        (d.get("obj_token") or "")
+                        + "|"
+                        + (d.get("node_token") or "")
+                    )
+                    not in pending_ids
+                ]
+                if extra:
+                    print(
+                        f"↺ 标题仍以日期/编号开头，强制重处理: {len(extra)} 篇",
+                        flush=True,
+                    )
+                    pending = list(pending) + extra
+            docs = pending
+            skipped = max(0, before - len(docs))
             if skipped:
                 print(f"⏭️ ledger 已写跳过: {skipped}，剩余 {len(docs)}")
 

@@ -37,6 +37,9 @@ def enrich_after_copy(
     content: str = "",
     tag: Optional[Dict[str, Any]] = None,
     author: str = "",
+    original_title: str = "",
+    source_created_at: str = "",
+    source_created_ms: int = 0,
     enable_metadata_table: bool = True,
     enable_attachment_separator: bool = True,
 ) -> List[StepResult]:
@@ -56,6 +59,9 @@ def enrich_after_copy(
         content=content,
         tag=tag,
         author=author,
+        original_title=original_title or title,
+        source_created_at=source_created_at,
+        source_created_ms=source_created_ms,
     )
     return pipeline.run(ctx)
 

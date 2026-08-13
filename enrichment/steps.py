@@ -33,6 +33,7 @@ class MetadataTableStep:
         self.tm = tm
         self.enabled = enabled
         self._inserter = MetadataTableInserter(tm)
+        self._llm = None
 
     def apply(self, ctx: EnrichmentContext) -> StepResult:
         if not self.enabled:
@@ -66,6 +67,23 @@ class MetadataTableStep:
             source_folder = source_path.split(" / ")[0].strip()
         # Prefer LLM tag path; backfill has no tag → use TARGET folder breadcrumb
         classify_path = format_classify_path(tag) or (ctx.target_path or "").strip()
+        theme = None
+        llm_module = ""
+        if bool((ctx.extras or {}).get("use_llm_theme", True)):
+            try:
+                import config as _cfg
+
+                if getattr(_cfg, "DISPLAY_TITLE_USE_LLM_PURPOSE", True):
+                    if self._llm is None:
+                        from classify.display_llm import PurposeLLM
+
+                        self._llm = PurposeLLM()
+                    src_title = ctx.original_title or ctx.title or ""
+                    guess = self._llm.summarize(src_title, ctx.content or "")
+                    theme = guess.theme
+                    llm_module = guess.module
+            except Exception as exc:
+                print(f"⚠️ 元数据主题/型号 LLM 失败: {exc}", flush=True)
         meta = extract_doc_metadata(
             title=ctx.title or "",
             content=ctx.content or "",
@@ -77,6 +95,11 @@ class MetadataTableStep:
             doc_type=classify_doc_type_by_rules(ctx.title or "", ctx.content or ""),
             tag=tag,
             classify_path=classify_path,
+            original_title=ctx.original_title or "",
+            source_created_at=ctx.source_created_at or "",
+            source_created_ms=int(ctx.source_created_ms or 0),
+            theme=theme,
+            llm_module=llm_module,
         )
         ok = self._inserter.insert_from_metadata(
             meta, wiki_node_token=ctx.target_node_token

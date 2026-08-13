@@ -5,7 +5,8 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, Iterable, Optional, Set
+from datetime import datetime, timezone
+from typing import Any, Dict, Iterable, Optional, Sequence, Set
 
 from .http import feishu_request
 from .token_manager import TokenManager
@@ -16,6 +17,8 @@ _OPEN_ID_RE = re.compile(r"^(ou_|on_|cli_)[A-Za-z0-9]+$")
 
 
 class WikiMetaClient:
+    _contact_denied_logged = False
+
     def __init__(self, token_manager: TokenManager):
         self.token_manager = token_manager
         self._name_cache: Dict[str, str] = {}
@@ -53,6 +56,7 @@ class WikiMetaClient:
         if user_id in self._name_cache:
             return self._name_cache[user_id]
 
+        last_err = ""
         for id_type in ("open_id", "user_id", "union_id"):
             try:
                 url = f"https://open.feishu.cn/open-apis/contact/v3/users/{user_id}"
@@ -75,28 +79,68 @@ class WikiMetaClient:
                     if name and not _looks_like_user_id(name):
                         self._name_cache[user_id] = name
                         return name
+                else:
+                    last_err = f"code={data.get('code')} msg={data.get('msg')}"
             except Exception as exc:
+                last_err = str(exc)
                 logger.debug("contact lookup %s as %s: %s", user_id, id_type, exc)
 
-        # Do not paste ou_xxx into metadata tables.
+        if last_err and not WikiMetaClient._contact_denied_logged:
+            WikiMetaClient._contact_denied_logged = True
+            logger.warning("通讯录无法解析作者（%s）；回退 SCAN 源路径文件夹人名", last_err)
+            print(
+                f"⚠️ 通讯录读不到作者（{last_err}）。"
+                "应用需 contact:user.base:readonly 且用户在通讯录可用范围内；"
+                "将改用源路径一级/二级文件夹人名。",
+                flush=True,
+            )
         self._name_cache[user_id] = ""
         return ""
 
-    def get_author_display_name(self, node_token: str) -> str:
-        """Prefer document creator (author), then node_creator, then owner."""
-        try:
-            node = self.get_node(node_token)
-        except Exception as exc:
-            logger.warning("get_node for author failed %s: %s", node_token, exc)
-            return ""
+    def get_author_display_name(
+        self, node_token: str, *, source_path: str = ""
+    ) -> str:
+        """Prefer document creator display name; else SCAN folder person name."""
+        if node_token:
+            try:
+                node = self.get_node(node_token)
+            except Exception as exc:
+                logger.warning("get_node for author failed %s: %s", node_token, exc)
+                node = {}
+            for key in ("creator", "node_creator", "owner", "creator_id", "owner_id"):
+                uid = _extract_user_id((node or {}).get(key))
+                if uid:
+                    name = self.resolve_user_name(uid)
+                    if name:
+                        return name
+        if source_path:
+            path = source_path
+        elif node_token:
+            path = self.build_folder_path(node_token)
+        else:
+            path = ""
+        if path:
+            from classify.display_title import author_from_source_path
 
-        for key in ("creator", "node_creator", "owner", "creator_id", "owner_id"):
-            uid = _extract_user_id(node.get(key))
-            if uid:
-                name = self.resolve_user_name(uid)
-                if name:
-                    return name
+            return author_from_source_path(path)
         return ""
+
+    def source_identity(self, source_node_token: str) -> Dict[str, Any]:
+        """SCAN source title + create time from one get_node (cached)."""
+        out: Dict[str, Any] = {"title": "", "created_at": "", "created_ms": 0}
+        token = (source_node_token or "").strip()
+        if not token:
+            return out
+        try:
+            node = self.get_node(token)
+        except Exception as exc:
+            logger.warning("get_node for source identity failed %s: %s", token, exc)
+            return out
+        out["title"] = (node.get("title") or "").strip()
+        ms = wiki_node_millis(node)
+        out["created_ms"] = ms
+        out["created_at"] = format_wiki_datetime(ms)
+        return out
 
     def update_title(self, space_id: str, node_token: str, title: str) -> None:
         """Rename a wiki node (TARGET copy). Does not touch source SCAN nodes."""
@@ -188,6 +232,45 @@ def _looks_like_user_id(value: str) -> bool:
     return False
 
 
+def wiki_node_unix_seconds(
+    node: Optional[Dict[str, Any]],
+    keys: Sequence[str] = ("obj_create_time", "node_create_time"),
+) -> Optional[int]:
+    if not node:
+        return None
+    for key in keys:
+        raw = node.get(key)
+        if raw is None or raw == "":
+            continue
+        try:
+            ts = int(str(raw).strip())
+        except (TypeError, ValueError):
+            continue
+        if ts > 10_000_000_000:
+            ts //= 1000
+        if ts > 0:
+            return ts
+    return None
+
+
+def wiki_node_millis(node: Optional[Dict[str, Any]]) -> int:
+    sec = wiki_node_unix_seconds(node)
+    return int(sec * 1000) if sec else 0
+
+
+def format_wiki_datetime(ts: Optional[int], fmt: str = "%Y-%m-%d %H:%M") -> str:
+    if not ts:
+        return ""
+    seconds = int(ts)
+    if seconds > 10_000_000_000:
+        seconds //= 1000
+    try:
+        dt = datetime.fromtimestamp(seconds, tz=timezone.utc).astimezone()
+        return dt.strftime(fmt)
+    except (OverflowError, OSError, ValueError):
+        return ""
+
+
 def _extract_user_id(raw: Any) -> Optional[str]:
     if not raw:
         return None
@@ -201,4 +284,9 @@ def _extract_user_id(raw: Any) -> Optional[str]:
     return None
 
 
-__all__ = ["WikiMetaClient"]
+__all__ = [
+    "WikiMetaClient",
+    "format_wiki_datetime",
+    "wiki_node_millis",
+    "wiki_node_unix_seconds",
+]

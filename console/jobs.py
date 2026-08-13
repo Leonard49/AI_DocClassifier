@@ -104,7 +104,7 @@ JOB_CATALOG: List[JobSpec] = [
         "enrich_backfill",
         "副本增强回填（正式）",
         "enrich",
-        "TARGET：贴元数据表 + 附件分隔符（作者/源路径取自源文档）",
+        "TARGET：贴元数据表（原名/源路径/作者/产品线/创建时间）+ 附件分隔",
         [
             sys.executable,
             "-m",
@@ -118,7 +118,7 @@ JOB_CATALOG: List[JobSpec] = [
         "enrich_backfill_force_meta",
         "副本增强 · 强制重贴元数据表",
         "enrich",
-        "删除错误旧表后重贴（修正作者/源路径）；需 SHARED_STATE_DB",
+        "删除错误旧表后重贴（原名/源路径/作者/创建时间）；需 SHARED_STATE_DB",
         [
             sys.executable,
             "-m",
@@ -225,7 +225,7 @@ JOB_CATALOG: List[JobSpec] = [
         "display_title_agg",
         "归纳新标题 → 写入汇总表（TARGET，不改 wiki 原标题）",
         "bitable_title",
-        "格式：主题-产品线-作者 · 只写多维表格",
+        "格式：主题-模组型号-作者 · 只写多维表格",
         [
             sys.executable,
             "-m",
@@ -239,7 +239,7 @@ JOB_CATALOG: List[JobSpec] = [
         "display_title_rename",
         "归纳新标题 → 重命名 TARGET 副本标题",
         "bitable_title",
-        "格式：主题-产品线-作者 · 只动 TARGET，不改 SCAN 源",
+        "按正文归纳主题-模组型号-作者（去掉日期开头）· 只动 TARGET，不改 SCAN 源",
         [
             sys.executable,
             "-m",

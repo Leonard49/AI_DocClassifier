@@ -14,12 +14,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
 import os
-import random
 import sys
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
@@ -28,14 +24,12 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 import config
+from util.progress import iter_with_progress, map_parallel_with_progress, print_progress
 from classify.display_title import (
     DisplayTitleRow,
     build_display_title_row,
-    fallback_theme,
-    sanitize_theme,
-    theme_prompt,
 )
-from classify.llm_rate_limit import LLM_CONCURRENCY, LLM_RATE_LIMITER
+from classify.display_llm import PurposeLLM
 from feishu.bitable import FeishuBitableClient
 from feishu.create_feishu_node import FeishuNodeCreator
 from feishu.read_doc import FeishuDocumentReader
@@ -54,12 +48,10 @@ from state.shared_state import SharedCopyState, default_worker_id
 from tools._tool_scope import SCOPE_SCAN, SCOPE_TARGET
 from tools.runner import ToolJob, add_scope_args, ensure_utf8_stdio, write_tool_report
 
-from openai import OpenAI
-
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="展示标题 → 多维表格（格式：主题-产品线-作者；默认只处理 TARGET）"
+        description="展示标题 → 多维表格（格式：主题-模组型号-作者；默认只处理 TARGET）"
     )
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--list-folders", action="store_true")
@@ -71,62 +63,6 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--skip-date-api", action="store_true")
     add_scope_args(p)
     return p.parse_args()
-
-
-class PurposeLLM:
-    def __init__(self):
-        self.client = OpenAI(
-            api_key=config.LLM_API_KEY,
-            base_url=config.LLM_BASE_URL,
-            max_retries=0,
-        )
-        self.model = config.LLM_MODEL
-        self.max_retries = config.LLM_MAX_RETRIES
-
-    def summarize(self, title: str, content: str) -> str:
-        from openai import (
-            APIConnectionError,
-            APIStatusError,
-            APITimeoutError,
-            InternalServerError,
-            RateLimitError,
-        )
-
-        messages = [
-            {"role": "system", "content": "只输出极短中文主题短语，不要解释。"},
-            {"role": "user", "content": theme_prompt(title, content)},
-        ]
-        fallback = fallback_theme(title, content)
-        with LLM_CONCURRENCY:
-            for attempt in range(self.max_retries):
-                LLM_RATE_LIMITER.wait()
-                try:
-                    resp = self.client.chat.completions.create(
-                        model=self.model,
-                        messages=messages,
-                        temperature=0.2,
-                        max_tokens=32,
-                    )
-                    raw = (resp.choices[0].message.content or "").strip()
-                    return sanitize_theme(raw, fallback=fallback)
-                except Exception as e:
-                    retryable = isinstance(
-                        e,
-                        (
-                            APIConnectionError,
-                            APITimeoutError,
-                            InternalServerError,
-                            RateLimitError,
-                        ),
-                    ) or (
-                        isinstance(e, APIStatusError)
-                        and e.status_code in {408, 429, 500, 502, 503, 504}
-                    )
-                    if not retryable or attempt >= self.max_retries - 1:
-                        print(f"⚠️ 文章主题 LLM 失败 ({title}): {e} → {fallback}")
-                        return fallback
-                    time.sleep(min(2**attempt + random.uniform(0.2, 1.0), 30.0))
-        return fallback
 
 
 def _write_rows(
@@ -207,7 +143,7 @@ def main() -> int:
         return 1
 
     job = ToolJob(
-        title="展示标题 → 多维表格（主题-产品线-作者；不改 wiki）",
+        title="展示标题 → 多维表格（主题-模组型号-作者；不改 wiki）",
         ops=[OP_DISPLAY_TITLE_BITABLE],
         skip_config_key="DISPLAY_TITLE_SKIP_EXISTING",
         require_llm=use_llm,
@@ -232,12 +168,12 @@ def main() -> int:
 
         reader = FeishuDocumentReader(tm)
         read_map: Dict[str, Tuple[str, str]] = {}
+        progress_every = max(1, int(getattr(config, "PROGRESS_INTERVAL", 10) or 10))
         if args.skip_read:
             for d in unique_docs:
                 obj = d.get("obj_token") or d["node_token"]
                 read_map[obj] = (d.get("title") or "", "")
         else:
-            print("\n📖 读取正文…")
 
             def _read(doc: Dict):
                 title = doc.get("title") or ""
@@ -248,73 +184,112 @@ def main() -> int:
                         or ""
                     )
                 except Exception as exc:
-                    print(f"⚠️ 读取失败 {title}: {exc}")
+                    print(f"⚠️ 读取失败 {title}: {exc}", flush=True)
                     content = ""
                 return obj, title, content
 
-            with ThreadPoolExecutor(max_workers=max(1, config.READ_WORKERS)) as pool:
-                futs = [pool.submit(_read, d) for d in unique_docs]
-                for fut in as_completed(futs):
-                    obj, title, content = fut.result()
-                    read_map[obj] = (title, content)
+            for obj, title, content in map_parallel_with_progress(
+                unique_docs,
+                _read,
+                workers=max(1, config.READ_WORKERS),
+                label="📖 读取正文",
+                progress_interval=progress_every,
+                is_ok=lambda r: bool((r[2] or "").strip()),
+            ):
+                read_map[obj] = (title, content)
 
         wiki_meta = WikiMetaClient(tm)
         node_map: Dict[str, dict] = {}
         if not args.skip_date_api:
-            print("\n🕒 读取节点时间…")
-            for d in unique_docs:
+            print(
+                f"\n🕒 读取节点元数据（共 {len(unique_docs)} 篇）…",
+                flush=True,
+            )
+            start_nodes = datetime.now()
+            for i, d in enumerate(unique_docs, 1):
                 node = d["node_token"]
                 try:
                     node_map[node] = wiki_meta.get_node(node)
                 except Exception as exc:
-                    print(f"⚠️ get_node 失败 {d.get('title')}: {exc}")
+                    print(f"⚠️ get_node 失败 {d.get('title')}: {exc}", flush=True)
+                if i == 1 or i == len(unique_docs) or i % progress_every == 0:
+                    print_progress(
+                        "🕒 节点元数据",
+                        i,
+                        len(unique_docs),
+                        start=start_nodes,
+                    )
 
         registry_by_copy: Dict[str, Dict] = {}
         shared_db = (getattr(config, "SHARED_STATE_DB", None) or "").strip()
-        if shared_db and config.METADATA_TABLE_FETCH_AUTHOR:
+        if shared_db:
             try:
                 shared = SharedCopyState(
                     db_path=shared_db,
                     worker_id=config.WORKER_ID or default_worker_id(),
                 )
                 registry_by_copy = shared.index_by_copied_node()
-                print(f"🔗 共享库映射: {len(registry_by_copy)} 条（用于作者）")
+                print(
+                    f"🔗 共享库映射: {len(registry_by_copy)} 条（原标题/源路径/作者）",
+                    flush=True,
+                )
             except Exception as exc:
-                print(f"⚠️ 打开 SHARED_STATE_DB 失败（作者可能为空）: {exc}")
+                print(f"⚠️ 打开 SHARED_STATE_DB 失败（作者可能为空）: {exc}", flush=True)
 
         llm = PurposeLLM() if use_llm else None
-        print("\n🏷️ 生成展示标题（主题-产品线-作者）…")
         rows: List[DisplayTitleRow] = []
-        for doc in unique_docs:
+        for doc in iter_with_progress(
+            unique_docs,
+            total=len(unique_docs),
+            label="🏷️ 生成展示标题",
+            progress_interval=progress_every,
+        ):
             obj = doc.get("obj_token") or doc["node_token"]
             node = doc["node_token"]
             title, content = read_map.get(obj, (doc.get("title") or "", ""))
-            theme = llm.summarize(title, content) if llm else None
+            reg = registry_by_copy.get(node) or {}
+            src = (reg.get("source_node_token") or "").strip()
+            source_title = (reg.get("title") or "").strip()
+            scan_path = (reg.get("source_path") or doc.get("source_path") or "").strip()
+            if not scan_path and src:
+                try:
+                    scan_path = wiki_meta.build_folder_path(src) or ""
+                except Exception:
+                    scan_path = ""
+            guess = llm.summarize(source_title or title, content) if llm else None
+            theme = guess.theme if guess else None
+            llm_module = guess.module if guess else ""
 
             author = ""
+            author_node = src or node
             if config.METADATA_TABLE_FETCH_AUTHOR:
-                src = (registry_by_copy.get(node) or {}).get("source_node_token") or ""
-                author_node = src or node
                 try:
-                    author = wiki_meta.get_author_display_name(author_node) or ""
+                    author = wiki_meta.get_author_display_name(
+                        author_node, source_path=scan_path
+                    ) or ""
                 except Exception as exc:
-                    print(f"⚠️ 作者解析失败 {title}: {exc}")
+                    print(f"⚠️ 作者解析失败 {title}: {exc}", flush=True)
+            if not author:
+                from classify.display_title import author_from_source_path
+
+                author = author_from_source_path(scan_path)
 
             row = build_display_title_row(
                 title=title,
                 content=content,
                 obj_token=obj,
                 node_token=node,
-                source_path=doc.get("target_path")
-                or doc.get("source_path")
-                or "",
+                source_path=scan_path,
                 source_folder=doc.get("source_folder_name") or "TARGET",
                 theme=theme,
                 author=author,
                 wiki_node=node_map.get(node),
+                source_title=source_title,
+                target_path=(doc.get("target_path") or "").strip(),
+                llm_module=llm_module,
             )
             rows.append(row)
-            print(f"  · {row.original_title}\n    → {row.display_title}")
+            print(f"  · {row.original_title}\n    → {row.display_title}", flush=True)
 
         report = {
             "scope": ctx.scope,

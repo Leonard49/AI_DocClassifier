@@ -25,9 +25,8 @@ import json
 import os
 import sys
 from collections import Counter, defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _ROOT not in sys.path:
@@ -42,6 +41,7 @@ from classify.doc_metadata import (
     extract_doc_metadata,
     parse_doc_type_response,
 )
+from classify.display_llm import PurposeLLM
 from classify.llm_rate_limit import LLM_CONCURRENCY, LLM_RATE_LIMITER
 from feishu.bitable import FeishuBitableClient
 from feishu.create_feishu_node import FeishuNodeCreator
@@ -64,7 +64,7 @@ from state.scan_folders import (
     format_folder_table,
     load_scan_folders,
 )
-from state.shared_state import default_worker_id
+from state.shared_state import SharedCopyState, default_worker_id
 from tools._tool_scope import SCOPE_SCAN, SCOPE_TARGET
 from tools.runner import ToolJob, ensure_utf8_stdio, write_tool_report
 
@@ -72,6 +72,20 @@ from openai import OpenAI
 
 _VALID_MODES = ("aggregated", "per-token", "both")
 _VALID_PER_PARENT = ("target", "source")
+
+
+def _open_shared_state() -> Optional[SharedCopyState]:
+    db = (getattr(config, "SHARED_STATE_DB", None) or "").strip()
+    if not db:
+        return None
+    try:
+        return SharedCopyState(
+            db_path=db,
+            worker_id=config.WORKER_ID or default_worker_id(),
+        )
+    except Exception as exc:
+        print(f"⚠️ 无法打开 SHARED_STATE_DB: {exc}")
+        return None
 
 
 def _parse_args() -> argparse.Namespace:
@@ -376,7 +390,9 @@ def main() -> int:
 
     mode = _resolve_mode(args)
     per_parent = _resolve_per_token_parent(args)
-    use_llm = (not args.no_llm) and getattr(config, "METADATA_USE_LLM_DOC_TYPE", True)
+    use_doc_type_llm = (not args.no_llm) and getattr(config, "METADATA_USE_LLM_DOC_TYPE", True)
+    use_theme_llm = (not args.no_llm) and getattr(config, "DISPLAY_TITLE_USE_LLM_PURPOSE", True)
+    use_llm = use_doc_type_llm or use_theme_llm
 
     parent_token = (args.parent_token or config.TARGET_PARENT_TOKEN or "").strip()
     need_target_parent = (not args.dry_run) and (
@@ -430,6 +446,18 @@ def main() -> int:
     bitable = FeishuBitableClient(tm)
     wiki_meta = WikiMetaClient(tm)
 
+    registry_by_copy: Dict[str, Dict] = {}
+    if scope == SCOPE_TARGET:
+        shared = _open_shared_state()
+        if shared:
+            registry_by_copy = shared.index_by_copied_node()
+            print(
+                f"🔗 共享库映射: {len(registry_by_copy)} 条（原文档名称/源路径/创建时间）",
+                flush=True,
+            )
+        else:
+            print("⚠️ 未配置 SHARED_STATE_DB，原名与源路径可能无法还原", flush=True)
+
     folders: List[ScanFolder] = []
     docs_by_folder: Dict[str, List[Dict]] = defaultdict(list)
 
@@ -467,12 +495,12 @@ def main() -> int:
     )
 
     read_map: Dict[str, Tuple[str, str]] = {}
+    progress_every = max(1, int(getattr(config, "PROGRESS_INTERVAL", 10) or 10))
     if args.skip_read:
         for d in unique_docs:
             obj = d.get("obj_token") or d["node_token"]
             read_map[obj] = (d.get("title") or "", "")
     else:
-        print("\n📖 读取正文…")
 
         def _read(doc: Dict):
             title = doc.get("title") or ""
@@ -481,21 +509,34 @@ def main() -> int:
             try:
                 content = reader.get_raw_content(obj, wiki_node_token=node) or ""
             except Exception as exc:
-                print(f"⚠️ 读取失败 {title}: {exc}")
+                print(f"⚠️ 读取失败 {title}: {exc}", flush=True)
                 content = ""
             return obj, title, content
 
-        with ThreadPoolExecutor(max_workers=max(1, config.READ_WORKERS)) as pool:
-            futs = [pool.submit(_read, d) for d in unique_docs]
-            for fut in as_completed(futs):
-                obj, title, content = fut.result()
-                read_map[obj] = (title, content)
+        from util.progress import map_parallel_with_progress
 
-    llm = DocTypeLLM() if use_llm else None
+        for obj, title, content in map_parallel_with_progress(
+            unique_docs,
+            _read,
+            workers=max(1, config.READ_WORKERS),
+            label="📖 读取正文",
+            progress_interval=progress_every,
+            is_ok=lambda r: bool((r[2] or "").strip()),
+        ):
+            read_map[obj] = (title, content)
 
-    print("\n🏷️ 提取元数据…")
+    llm = DocTypeLLM() if use_doc_type_llm else None
+    theme_llm = PurposeLLM() if use_theme_llm else None
+
+    from util.progress import iter_with_progress
+
     meta_by_obj: Dict[str, DocMetadata] = {}
-    for doc in unique_docs:
+    for doc in iter_with_progress(
+        unique_docs,
+        total=len(unique_docs),
+        label="🏷️ 提取元数据",
+        progress_interval=progress_every,
+    ):
         obj = doc.get("obj_token") or doc["node_token"]
         node = doc["node_token"]
         title, content = read_map.get(obj, (doc.get("title") or "", ""))
@@ -506,21 +547,68 @@ def main() -> int:
             dtype = DEFAULT_DOC_TYPE
 
         author = ""
+        original_title = title
+        source_path = (doc.get("source_path") or "").strip()
+        source_folder = (
+            doc.get("source_folder_name") or doc.get("source_folder_id") or ""
+        )
+        source_created_at = ""
+        source_created_ms = 0
+        identity_node = node
+
+        if scope == SCOPE_TARGET:
+            row = registry_by_copy.get(node) or {}
+            source_node = (row.get("source_node_token") or "").strip()
+            if source_node:
+                identity_node = source_node
+            original_title = (row.get("title") or "").strip() or original_title
+            source_path = (row.get("source_path") or "").strip()
+            if source_path:
+                source_folder = source_path.split(" / ")[0].strip() or source_folder
+        # SCAN: identity_node is the scanned node itself
+
+        try:
+            ident = wiki_meta.source_identity(identity_node)
+            if not original_title and ident.get("title"):
+                original_title = ident["title"]
+            source_created_at = ident.get("created_at") or ""
+            source_created_ms = int(ident.get("created_ms") or 0)
+        except Exception as exc:
+            print(f"⚠️ 源文档身份读取失败 {title}: {exc}")
+
         if not args.skip_author:
             try:
-                author = wiki_meta.get_author_display_name(node)
+                author = wiki_meta.get_author_display_name(
+                    identity_node, source_path=source_path
+                )
             except Exception as exc:
                 print(f"⚠️ 作者解析失败 {title}: {exc}")
+        if not author and source_path:
+            from classify.display_title import author_from_source_path
+
+            author = author_from_source_path(source_path)
+
+        guess = (
+            theme_llm.summarize(original_title or title, content)
+            if theme_llm
+            else None
+        )
 
         meta_by_obj[obj] = extract_doc_metadata(
             title=title,
             content=content,
             obj_token=obj,
             node_token=node,
-            source_folder=doc.get("source_folder_name") or doc.get("source_folder_id") or "",
-            source_path=doc.get("target_path") or doc.get("source_path") or "",
+            source_folder=source_folder,
+            source_path=source_path,
             author=author,
             doc_type=dtype,
+            classify_path=(doc.get("target_path") or "").strip(),
+            original_title=original_title,
+            source_created_at=source_created_at,
+            source_created_ms=source_created_ms,
+            theme=guess.theme if guess else None,
+            llm_module=guess.module if guess else "",
         )
 
     rows_all = list(meta_by_obj.values())
@@ -541,8 +629,9 @@ def main() -> int:
         print("\n[dry-run] 示例（前 10 条）:")
         for r in rows_all[:10]:
             print(
-                f"  · {r.title[:50]} | {r.product_line} | {r.doc_type} | "
-                f"mods={r.modules[:40]} | author={r.author}"
+                f"  · { (r.original_title or r.title)[:50] } | {r.product_line} | "
+                f"path={ (r.source_path or '-')[:40] } | author={r.author} | "
+                f"created={r.source_created_at or '-'}"
             )
         print(
             f"\n[dry-run] 将写入 mode={mode}"

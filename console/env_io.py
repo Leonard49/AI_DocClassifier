@@ -65,7 +65,7 @@ CONFIG_SCHEMA: List[Tuple[str, str, str, str]] = [
     ("DISPLAY_TITLE_BITABLE_MODE", "展示标题表模式", "metadata", "str"),
     ("DISPLAY_TITLE_BITABLE_TITLE", "展示标题汇总表名", "metadata", "str"),
     ("DISPLAY_TITLE_BITABLE_APP_TOKEN", "已有展示标题 app_token", "metadata", "str"),
-    ("DISPLAY_TITLE_USE_LLM_PURPOSE", "展示标题文章主题用 LLM", "metadata", "bool"),
+    ("DISPLAY_TITLE_USE_LLM_PURPOSE", "展示标题/贴表：主题和主型号用 LLM", "metadata", "bool"),
     ("DISPLAY_TITLE_SKIP_EXISTING", "展示标题多维表已写跳过", "metadata", "bool"),
     ("DISPLAY_TITLE_RENAME_SKIP_EXISTING", "TARGET 改标题已写跳过", "metadata", "bool"),
     ("REFRESH_TARGET_SKIP_UNCHANGED", "源刷新仅处理有变更", "classify", "bool"),

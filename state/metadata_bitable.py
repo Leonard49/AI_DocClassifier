@@ -32,13 +32,17 @@ _TYPE_URL = 15
 
 # Canonical column names (match plan)
 FIELD_TITLE = "标题"
+FIELD_ORIGINAL_TITLE = "原文档名称"
 FIELD_DOC_ID = "文档ID"
 FIELD_PRODUCT_LINE = "产品线"
 FIELD_MODULES = "模块型号"
 FIELD_DOC_TYPE = "文档类型"
+FIELD_THEME = "文章主题"
 FIELD_AUTHOR = "作者"
 FIELD_SOURCE_FOLDER = "来源文件夹"
 FIELD_SOURCE_PATH = "源路径"
+FIELD_SOURCE_DOC_PATH = "源文档路径"
+FIELD_SOURCE_CREATED_AT = "源文档创建时间"
 FIELD_WIKI_URL = "Wiki链接"
 FIELD_UPDATED_AT = "更新时间"
 
@@ -193,6 +197,7 @@ def _desired_fields() -> List[Dict[str, Any]]:
             pl_opts.append(x)
     return [
         {"field_name": FIELD_TITLE, "type": _TYPE_TEXT},
+        {"field_name": FIELD_ORIGINAL_TITLE, "type": _TYPE_TEXT},
         {"field_name": FIELD_DOC_ID, "type": _TYPE_TEXT},
         {
             "field_name": FIELD_PRODUCT_LINE,
@@ -205,9 +210,16 @@ def _desired_fields() -> List[Dict[str, Any]]:
             "type": _TYPE_SINGLE_SELECT,
             "property": _select_options(list(DOC_TYPES)),
         },
+        {"field_name": FIELD_THEME, "type": _TYPE_TEXT},
         {"field_name": FIELD_AUTHOR, "type": _TYPE_TEXT},
         {"field_name": FIELD_SOURCE_FOLDER, "type": _TYPE_TEXT},
         {"field_name": FIELD_SOURCE_PATH, "type": _TYPE_TEXT},
+        {"field_name": FIELD_SOURCE_DOC_PATH, "type": _TYPE_TEXT},
+        {
+            "field_name": FIELD_SOURCE_CREATED_AT,
+            "type": _TYPE_DATETIME,
+            "property": {"date_formatter": "yyyy/MM/dd HH:mm"},
+        },
         {"field_name": FIELD_WIKI_URL, "type": _TYPE_URL},
         {
             "field_name": FIELD_UPDATED_AT,
@@ -219,19 +231,30 @@ def _desired_fields() -> List[Dict[str, Any]]:
 
 def metadata_to_fields(meta: DocMetadata, *, updated_ms: Optional[int] = None) -> Dict[str, Any]:
     ts = updated_ms if updated_ms is not None else int(time.time() * 1000)
+    original = (meta.original_title or meta.title or "").strip()
+    source_path = meta.source_path or ""
     fields: Dict[str, Any] = {
         FIELD_TITLE: meta.title,
+        FIELD_ORIGINAL_TITLE: original,
         FIELD_DOC_ID: meta.obj_token,
         FIELD_PRODUCT_LINE: meta.product_line,
         FIELD_MODULES: meta.modules,
         FIELD_DOC_TYPE: meta.doc_type,
+        FIELD_THEME: getattr(meta, "theme", "") or "",
         FIELD_AUTHOR: meta.author,
         FIELD_SOURCE_FOLDER: meta.source_folder,
-        FIELD_SOURCE_PATH: meta.source_path,
+        FIELD_SOURCE_PATH: source_path,
+        FIELD_SOURCE_DOC_PATH: source_path,
         FIELD_UPDATED_AT: ts,
     }
+    created_ms = int(getattr(meta, "source_created_ms", 0) or 0)
+    if created_ms:
+        fields[FIELD_SOURCE_CREATED_AT] = created_ms
     if meta.wiki_url:
-        fields[FIELD_WIKI_URL] = {"text": meta.title or "Wiki", "link": meta.wiki_url}
+        fields[FIELD_WIKI_URL] = {
+            "text": original or meta.title or "Wiki",
+            "link": meta.wiki_url,
+        }
     return fields
 
 

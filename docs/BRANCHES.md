@@ -243,6 +243,12 @@
 
 | 日期 | 优化内容 | 提交 / 关键 |
 |------|----------|-------------|
+| 2026-08-13 | **展示标题/贴表共用 LLM 归纳主题+主型号**：正则 PN 优先，否则 LLM 给模组或产品名，再否则 TARGET 一级\|二级；元数据表补 **文章主题**，作者与标题同一套中英文人名 | 待提交 · `classify/display_llm.py` · `classify/display_title.py` · `classify/doc_metadata.py` |
+| 2026-08-13 | **展示标题作者保留中英文名**；无模组 PN 时中间段用 TARGET 一级\|二级目录，不再写「未知型号」 | 待提交 · `classify/display_title.py` |
+| 2026-08-13 | **展示标题改为「主题-模组型号-作者」**：主题按正文归纳禁止日期开头；通讯录 41050 时用 SCAN 源路径人名文件夹回退作者 | 待提交 · `classify/display_title.py` · `feishu/wiki_meta.py` · `tools/rename_target_display_titles.py` |
+| 2026-08-13 | **元数据表补齐源数据**：贴表/多维表含 **原文档名称、源文档路径、作者、产品线、源文档创建时间**（取 SCAN 源节点，不随 TARGET 改名）；旧贴表需 `--force-metadata` | 待提交 · `classify/doc_metadata.py` · `tools/enrich_copied_docs.py` · `tools/export_doc_metadata_bitable.py` |
+| 2026-08-13 | **展示标题主题不再用日期开头**：去掉原标题流水号/日期前缀；LLM 按正文归纳主题；日期开头的 TARGET 标题即使 ledger 已写也会重命名 | 待提交 · `classify/display_title.py` · `tools/rename_target_display_titles.py` |
+| 2026-08-12 | **归纳新标题日志卡在「读取正文」**：并行读/生成阶段补进度行（`util/progress.py`，`flush=True`，间隔 `PROGRESS_INTERVAL`）；同样修元数据 bitable 工具 | 待提交 · `tools/export_display_title_bitable.py` · `tools/rename_target_display_titles.py` · `tools/export_doc_metadata_bitable.py` |
 | 2026-08-12 | **贴表列宽加宽**：docx 元数据表 `column_width` 默认 `160,560` px（可配 `METADATA_TABLE_COLUMN_WIDTHS`），减轻值列挤换行；旧表需 `--force-metadata` 重贴 | `e888213` · `feishu/metadata_table.py` · `config.py` |
 | 2026-08-12 | **控制台清单可视化添加 SCAN token**：粘贴 wiki token（或 URL）→ 可选飞书解析 name/id →「添加并保存」写入 `scan_folders.json`；行可移除后再保存。不再必须手改 JSON。API：`POST /api/folders/preview`、`POST /api/folders/add`。同步建立 BRANCHES「迭代优化日志」记账约定 | `a56bb5c` · `console/app.py` · `console/static/*` · `state/scan_folders.py` · [CONSOLE.md](CONSOLE.md) · [BRANCHES.md](BRANCHES.md) |
 | 2026-08-12 | **文档同步**：贴表双路径、展示标题、源刷新、作者排障等写回 README / QUICK_START / CONSOLE / 分类准则 / 说明文档 / 增量方案对比 | `844ee66` |
@@ -273,8 +279,10 @@
 
 | 字段 | 来源 |
 |------|------|
-| 作者 | SCAN 源 `creator` → 通讯录显示名 |
-| 源路径 | SCAN 目录 breadcrumb（`SHARED_STATE_DB`） |
+| 作者 | SCAN 源 `creator` → 通讯录；失败则源路径人名文件夹 |
+| 原文档名称 | SCAN 源标题（共享库 / 源节点；非 TARGET 展示标题） |
+| 源路径 / 源文档路径 | SCAN 目录 breadcrumb（`SHARED_STATE_DB`） |
+| 源文档创建时间 | SCAN 源 `obj_create_time` |
 | 分类路径 | 复制时用分类 `tag`；回填用 TARGET `target_path` |
 
 ### 关联文件（本分支累计）

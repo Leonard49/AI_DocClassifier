@@ -53,6 +53,11 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--skip-read-content", action="store_true")
     p.add_argument("--no-author", action="store_true")
     p.add_argument(
+        "--no-llm",
+        action="store_true",
+        help="贴表时不用 LLM 归纳文章主题/主型号（仅规则回退）",
+    )
+    p.add_argument(
         "--force-metadata",
         action="store_true",
         help="删除已有「文档元数据」表后按源文档信息重贴（用于修正错误作者/源路径）",
@@ -129,22 +134,37 @@ def _resolve_source_fields(
     source_path = (row.get("source_path") or "").strip()
     scan_root = (row.get("scan_root") or "").strip()
     source_obj = (row.get("obj_token") or "").strip()
+    original_title = (row.get("title") or "").strip()
+    source_created_at = ""
+    source_created_ms = 0
 
     stops = set(stop_tokens)
     if scan_root:
         stops.add(scan_root)
 
-    if wiki_meta and source_node and not source_path:
-        source_path = wiki_meta.build_folder_path(
-            source_node, stop_at_tokens=stops
-        )
+    if wiki_meta and source_node:
+        ident = wiki_meta.source_identity(source_node)
+        if not original_title:
+            original_title = ident.get("title") or ""
+        source_created_at = ident.get("created_at") or ""
+        source_created_ms = int(ident.get("created_ms") or 0)
+        if not source_path:
+            source_path = wiki_meta.build_folder_path(
+                source_node, stop_at_tokens=stops
+            )
 
     author = ""
-    if fetch_author and wiki_meta and source_node:
+    if wiki_meta and source_node and fetch_author:
         try:
-            author = wiki_meta.get_author_display_name(source_node) or ""
+            author = wiki_meta.get_author_display_name(
+                source_node, source_path=source_path
+            ) or ""
         except Exception as exc:
             print(f"  ⚠️ 作者解析失败(源节点): {exc}")
+    if not author and source_path:
+        from classify.display_title import author_from_source_path
+
+        author = author_from_source_path(source_path)
 
     return {
         "source_node_token": source_node,
@@ -152,6 +172,9 @@ def _resolve_source_fields(
         "source_obj_token": source_obj,
         "author": author,
         "scan_root": scan_root,
+        "original_title": original_title,
+        "source_created_at": source_created_at,
+        "source_created_ms": source_created_ms,
         "from_registry": "yes" if row else "no",
     }
 
@@ -278,6 +301,8 @@ def main() -> int:
                     f"  {i}. {d.get('title') or ''} | "
                     f"target={node} | src={fields['source_node_token'] or '-'} | "
                     f"src_path={fields['source_path'] or '-'} | "
+                    f"orig={fields['original_title'] or '-'} | "
+                    f"created={fields['source_created_at'] or '-'} | "
                     f"classify={d.get('target_path') or '-'} | "
                     f"author={fields['author'] or '-'} | "
                     f"registry={fields['from_registry']}"
@@ -330,6 +355,8 @@ def main() -> int:
                 print(
                     f"  源节点={fields['source_node_token'] or '-'} | "
                     f"源路径={fields['source_path'] or '-'} | "
+                    f"原名={fields['original_title'] or '-'} | "
+                    f"创建={fields['source_created_at'] or '-'} | "
                     f"分类路径={doc.get('target_path') or '-'} | "
                     f"作者={fields['author'] or '-'}"
                 )
@@ -353,7 +380,13 @@ def main() -> int:
                 content=content,
                 tag=None,
                 author=fields["author"],
-                extras={"force_metadata": bool(args.force_metadata)},
+                original_title=fields["original_title"],
+                source_created_at=fields["source_created_at"],
+                source_created_ms=int(fields["source_created_ms"] or 0),
+                extras={
+                    "force_metadata": bool(args.force_metadata),
+                    "use_llm_theme": not bool(getattr(args, "no_llm", False)),
+                },
             )
             results: List[StepResult] = pipeline.run(enrich_ctx)
             print(f"  → {format_results(results)}")

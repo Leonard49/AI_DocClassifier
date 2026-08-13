@@ -357,14 +357,29 @@ def main() -> int:
                             )
                     except Exception as exc:
                         print(f"  ⚠️ 读取新副本正文失败: {exc}")
+                    ident = {}
+                    try:
+                        ident = wiki_meta.source_identity(src_node)
+                    except Exception:
+                        ident = {}
                     author = ""
                     if config.METADATA_TABLE_FETCH_AUTHOR:
                         try:
                             author = (
-                                wiki_meta.get_author_display_name(src_node) or ""
+                                wiki_meta.get_author_display_name(
+                                    src_node,
+                                    source_path=row.get("source_path") or "",
+                                )
+                                or ""
                             )
                         except Exception:
                             pass
+                    if not author:
+                        from classify.display_title import author_from_source_path
+
+                        author = author_from_source_path(
+                            row.get("source_path") or ""
+                        )
                     target_path = wiki_meta.build_folder_path(
                         new_copy, stop_at_tokens=[target_root]
                     )
@@ -378,6 +393,9 @@ def main() -> int:
                         target_path=target_path,
                         content=content,
                         author=author,
+                        original_title=(row.get("title") or ident.get("title") or ""),
+                        source_created_at=ident.get("created_at") or "",
+                        source_created_ms=int(ident.get("created_ms") or 0),
                         enable_metadata_table=config.ENABLE_METADATA_TABLE,
                         enable_attachment_separator=config.ENABLE_ATTACHMENT_SEPARATOR,
                     )
