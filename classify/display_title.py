@@ -249,6 +249,26 @@ def title_has_leading_date_noise(title: str) -> bool:
     return (not cleaned) or cleaned != raw
 
 
+def title_looks_like_display_title(title: str) -> bool:
+    """True when TARGET title is already 主题-模组型号-作者 (colleague may have finished it)."""
+    raw = (title or "").strip()
+    if not raw or "未知作者" in raw:
+        return False
+    if title_has_leading_date_noise(raw):
+        return False
+    parts = [p.strip() for p in raw.split(_SEP) if p.strip()]
+    if len(parts) < 3:
+        return False
+    theme, module, author = parts[0], parts[1], _SEP.join(parts[2:])
+    if looks_like_date_theme(theme):
+        return False
+    if not module or module == "未知型号":
+        return False
+    if not author:
+        return False
+    return True
+
+
 def strip_metadata_preamble(content: str) -> str:
     """Drop the inline 文档元数据 table so theme LLM reads the article body."""
     lines = (content or "").splitlines()
@@ -663,6 +683,7 @@ __all__ = [
     "looks_like_date_theme",
     "strip_title_noise",
     "title_has_leading_date_noise",
+    "title_looks_like_display_title",
     "author_from_source_path",
     "resolve_author",
     "resolve_module_model",

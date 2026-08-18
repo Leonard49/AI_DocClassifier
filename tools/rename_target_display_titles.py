@@ -29,6 +29,7 @@ from classify.display_title import (
     DisplayTitleRow,
     build_display_title_row,
     title_has_leading_date_noise,
+    title_looks_like_display_title,
 )
 from feishu.read_doc import FeishuDocumentReader
 from feishu.wiki_meta import WikiMetaClient
@@ -92,6 +93,29 @@ def main() -> int:
     tm = ctx.tm
     ledger = ctx.ledger
     docs = ctx.docs
+    if skip_existing and docs:
+        pending = []
+        skipped_fmt = 0
+        for d in docs:
+            title = d.get("title") or ""
+            if title_looks_like_display_title(title):
+                skipped_fmt += 1
+                entity = d.get("obj_token") or d.get("node_token") or ""
+                ledger.mark(
+                    entity,
+                    OP_DISPLAY_TITLE_RENAME,
+                    node_token=d.get("node_token") or "",
+                    status="skipped",
+                    detail="already display title format",
+                )
+                continue
+            pending.append(d)
+        if skipped_fmt:
+            print(
+                f"⏭️ 标题已是「主题-型号-作者」，跳过: {skipped_fmt}，剩余 {len(pending)}",
+                flush=True,
+            )
+        docs = pending
 
     try:
         if not docs:
