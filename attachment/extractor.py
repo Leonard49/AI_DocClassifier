@@ -467,6 +467,102 @@ class AttachmentExtractor:
                 logger.warning("删除空标题失败 doc=%s index=%s", doc_token, index)
         return deleted
 
+    def clear_extracted_attachment_bodies(self, doc_token: str) -> int:
+        """Delete blocks from the first `附件：` heading to the end of the doc."""
+        children = self._list_root_children_ordered(doc_token)
+        start = None
+        for index, block in enumerate(children):
+            if _block_heading_text(block).startswith(ATTACHMENT_HEADING_PREFIX):
+                start = index
+                break
+        if start is None:
+            return 0
+        total = len(children) - start
+        remaining_end = len(children)
+        while remaining_end > start:
+            chunk_start = max(start, remaining_end - 50)
+            if not self._delete_root_children_range(doc_token, chunk_start, remaining_end):
+                logger.warning(
+                    "删除已提取附件内容失败 doc=%s [%s, %s)",
+                    doc_token,
+                    chunk_start,
+                    remaining_end,
+                )
+                return 0
+            remaining_end = chunk_start
+        return total
+
+    def _delete_root_children_range(
+        self, doc_token: str, start_index: int, end_index: int
+    ) -> bool:
+        if end_index <= start_index:
+            return True
+        root_id = self._get_root_id(doc_token)
+        if not root_id:
+            return False
+        url = (
+            f"https://open.feishu.cn/open-apis/docx/v1/documents/"
+            f"{doc_token}/blocks/{root_id}/children/batch_delete"
+        )
+        resp = feishu_request(
+            "DELETE",
+            url,
+            headers=self._headers,
+            params={"document_revision_id": -1},
+            json={"start_index": start_index, "end_index": end_index},
+        )
+        data = resp.json() if resp.text else {}
+        return resp.status_code == 200 and data.get("code") == 0
+
+    def repair_images(
+        self,
+        node_token: str,
+        *,
+        source_node_token: str = "",
+    ) -> Dict[str, int]:
+        doc_token = self._get_doc_token(node_token)
+        if not doc_token:
+            return {"images": 0, "rebound": 0, "empty": 0, "failed": 0, "skipped": 1}
+        source_doc = ""
+        if source_node_token and source_node_token != node_token:
+            source_doc = self._get_doc_token(source_node_token) or ""
+        return self._extractors["pdf"].rebind_attachment_images(
+            doc_token, source_doc_token=source_doc
+        )
+
+    def reextract_attachments(
+        self,
+        node_token: str,
+        *,
+        title: Optional[str] = None,
+        source_path: str = "",
+    ) -> AttachmentDocResult:
+        doc_token = self._get_doc_token(node_token)
+        if not doc_token:
+            return AttachmentDocResult(
+                title=title or node_token,
+                node_token=node_token,
+                source_path=source_path,
+                status="failed",
+                error="无法解析文档 token",
+            )
+        attachments = self._list_attachments(doc_token)
+        if not attachments:
+            return AttachmentDocResult(
+                title=title or node_token,
+                node_token=node_token,
+                obj_token=doc_token,
+                source_path=source_path,
+                status="failed",
+                error="文档内没有可重新提取的 PDF/Word/PPT 附件，已中止（避免误删提取区）",
+            )
+        removed = self.clear_extracted_attachment_bodies(doc_token)
+        if removed:
+            print(f"  🧹 已删除旧提取内容 {removed} 块，准备重提")
+        return self.process_document(
+            node_token, title=title, source_path=source_path
+        )
+
     @staticmethod
     def _is_orphan_attachment_heading(
         children: List[Dict[str, Any]],
@@ -646,7 +742,9 @@ class AttachmentExtractor:
 
         try:
             print(f"  ⬇️ 下载: {name}")
-            extractor.download_file(att["file_token"], local_path)
+            extractor.download_file(
+                att["file_token"], local_path, doc_token=doc_token
+            )
             extractor.append_blocks(
                 doc_token,
                 [

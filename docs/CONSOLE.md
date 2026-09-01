@@ -92,7 +92,7 @@ notepad .env
 | **归纳新标题** | 写入汇总表 / 试跑 | TARGET；格式 **主题-模组型号-作者**（**不改 wiki**） |
 | **归纳新标题** | **重命名 TARGET 副本标题** / 试跑 | 按**正文**归纳主题（去掉日期/流水号开头），格式**主题-模组型号-作者**；**不改 SCAN 源** |
 | 运维纠偏 | **源 → TARGET 内容刷新** / 试跑 / 强制全量 | 源有更新时重拷；保留整理标题；旧副本进 `_已废弃_源刷新` |
-| 运维纠偏 | Others 纠偏 / 主题归档 / 附件重试 | 运维专项 |
+| 运维纠偏 | Others 纠偏 / 主题归档 / 附件重试 / **修复附件提取图片** | 运维专项 |
 
 操作要点：
 
@@ -101,13 +101,22 @@ notepad .env
 3. 「停止任务」会尝试中断子进程；复制到一半时飞书侧可能已有部分结果，属正常。  
 4. 关浏览器 **不会** 停任务；要用「停止任务」，或结束黑窗口（会连控制台一起停）。
 
-分类复制成功后，会跑 `enrichment` 管道（默认：贴元数据表 + 附件分隔符，均幂等）。已复制的旧文档可用任务「副本增强回填」或：
+分类复制成功后，会跑 `enrichment` 管道（默认：贴元数据表 + 附件分隔符 + 重绑附件提取区图片，均幂等）。已复制的旧文档可用任务「副本增强回填」或：
 
 ```bash
 python -m tools.enrich_copied_docs --dry-run --limit 20
 python -m tools.enrich_copied_docs
 # 修正错误的作者/源路径/分类路径（先删旧表再贴）：
 python -m tools.enrich_copied_docs --force-metadata --steps metadata_table
+```
+
+附件提取后 TARGET 副本里图片裂开时：
+
+```bash
+python -m tools.repair_extracted_images --dry-run --limit 20
+python -m tools.repair_extracted_images
+# 图块是空的、重绑无效时，删「附件：」提取区后重新提取：
+python -m tools.repair_extracted_images --reextract --limit 20
 ```
 
 回填时作者取源文档 `creator`，源路径取 SCAN 目录 breadcrumb（经 `SHARED_STATE_DB` 的 `copied_node → source_node` 映射）；**分类路径**取 TARGET 目录面包屑（`target_path`）。**不要**把知识枢纽路径误当作源路径。

@@ -220,6 +220,14 @@ python -m tools.retry_attachment_extract
 python -m tools.retry_attachment_extract --dry-run
 ```
 
+### 修复附件提取后裂开的图片
+
+```powershell
+python -m tools.repair_extracted_images --dry-run --limit 20
+python -m tools.repair_extracted_images
+python -m tools.repair_extracted_images --reextract --limit 20
+```
+
 ### 存量 Others 纠偏 / 主题归档
 
 ```powershell
@@ -287,6 +295,7 @@ python -m tools.others_theme_classify_move
 | `database disk image is malformed` | 删共享库 `.db` 及 `-wal`/`-shm`，重跑；保留本地 `processing_progress.json` |
 | 附件 `.doc` 失败 | 需本机安装 LibreOffice 或 Word（自动转换） |
 | 附件提取失败 | `python -m tools.retry_attachment_extract` |
+| 附件提取后图片裂开 / 加载不出来 | `python -m tools.repair_extracted_images`；空图块再加 `--reextract` |
 | 旧副本缺元数据表/附件分隔 | `python -m tools.enrich_copied_docs`（先 `--dry-run`） |
 | 贴表作者为空 / 分类路径为 `-` | 开联系人只读；确认 `SHARED_STATE_DB`；`--force-metadata` 重贴（分类路径取 TARGET 面包屑） |
 | 源改正文后 TARGET 未更新 | 正常（不同步）；跑 `refresh_target_from_source` 或控制台「源→TARGET 内容刷新」 |
@@ -302,6 +311,7 @@ python -m tools.others_theme_classify_move
 |------|------|
 | `logs/latest.log` | 本次运行完整日志 |
 | `logs/attachment_extract.json` | 附件提取结果与失败清单 |
+| `logs/repair_extracted_images.json` | 附件提取图片重绑/重提报告 |
 | `logs/classification_failures.json` | 分类失败清单 |
 | `logs/excluded_reports.json` | 被排除的周报/日报等 |
 | `logs/others_reclassify_move.json` | Others 产品线纠偏报告 |

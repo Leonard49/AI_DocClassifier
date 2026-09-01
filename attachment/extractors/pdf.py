@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import fitz
 
+from attachment.images import pixmap_from_pdf_xref
+
 from .base import BaseExtractor
 
 
@@ -35,7 +37,6 @@ class PDFExtractor(BaseExtractor):
                     root_block_id,
                     data["image_bytes"],
                     data["image_ext"],
-                    len(data["image_bytes"]),
                 )
             elif item_type == "page_sep":
                 if text_buf:
@@ -70,8 +71,12 @@ class PDFExtractor(BaseExtractor):
                     if text:
                         pi.append((tb[1], "text", text))
 
-            for img in page.get_images(full=True):
+            images = page.get_images(full=True)
+            mask_xrefs = {img[1] for img in images if img[1]}
+            for img in images:
                 xref = img[0]
+                if xref in mask_xrefs:
+                    continue
                 y0 = 0
                 try:
                     rects = page.get_image_rects(xref)
@@ -83,14 +88,25 @@ class PDFExtractor(BaseExtractor):
                         y0 = bbox.y0 if hasattr(bbox, "y0") else bbox[1]
                     except Exception:
                         pass
-                base_image = doc.extract_image(xref)
+                converted = pixmap_from_pdf_xref(doc, xref)
+                if converted:
+                    image_bytes, image_ext = converted
+                else:
+                    try:
+                        base_image = doc.extract_image(xref)
+                    except Exception:
+                        continue
+                    image_bytes = base_image.get("image") or b""
+                    image_ext = base_image.get("ext") or "png"
+                if not image_bytes:
+                    continue
                 pi.append(
                     (
                         y0,
                         "image",
                         {
-                            "image_bytes": base_image["image"],
-                            "image_ext": base_image["ext"],
+                            "image_bytes": image_bytes,
+                            "image_ext": image_ext,
                         },
                     )
                 )

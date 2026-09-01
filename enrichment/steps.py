@@ -155,13 +155,57 @@ class AttachmentSeparatorStep:
         return StepResult(self.id, "failed", msg)
 
 
+class ExtractedImagesStep:
+    """Re-upload images in the attachment-extract section onto the TARGET copy."""
+
+    id = "repair_extracted_images"
+    title = "附件提取图片修复"
+
+    def __init__(self, tm: TokenManager, *, enabled: bool = True):
+        self.tm = tm
+        self.enabled = enabled
+        self._extractor = None
+
+    def apply(self, ctx: EnrichmentContext) -> StepResult:
+        if not self.enabled:
+            return StepResult(self.id, "skipped", "disabled")
+        if not ctx.target_node_token:
+            return StepResult(self.id, "skipped", "no target_node_token")
+
+        if self._extractor is None:
+            from attachment.extractor import AttachmentExtractor
+
+            self._extractor = AttachmentExtractor(self.tm)
+
+        stats = self._extractor.repair_images(
+            ctx.target_node_token,
+            source_node_token=ctx.source_node_token or "",
+        )
+        if stats.get("skipped"):
+            return StepResult(self.id, "skipped", "resolve doc_token failed")
+        if not stats.get("images"):
+            return StepResult(self.id, "skipped", "no extracted images")
+        rebound = int(stats.get("rebound") or 0)
+        empty = int(stats.get("empty") or 0)
+        failed = int(stats.get("failed") or 0)
+        msg = (
+            f"images={stats.get('images')} rebound={rebound} "
+            f"empty={empty} failed={failed}"
+        )
+        if failed and not rebound:
+            return StepResult(self.id, "failed", msg)
+        return StepResult(self.id, "applied", msg)
+
+
 def default_steps(
     tm: TokenManager,
     *,
     enable_metadata_table: bool = True,
     enable_attachment_separator: bool = True,
+    enable_repair_extracted_images: bool = True,
 ) -> list:
     return [
         MetadataTableStep(tm, enabled=enable_metadata_table),
         AttachmentSeparatorStep(tm, enabled=enable_attachment_separator),
+        ExtractedImagesStep(tm, enabled=enable_repair_extracted_images),
     ]

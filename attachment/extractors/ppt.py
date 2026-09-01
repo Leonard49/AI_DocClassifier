@@ -98,7 +98,6 @@ class PPTExtractor(BaseExtractor):
                             root_block_id,
                             data["image_bytes"],
                             data["image_ext"],
-                            len(data["image_bytes"]),
                         )
                     except Exception as exc:
                         print(f"    跳过图片上传: {exc}")

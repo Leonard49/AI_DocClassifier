@@ -49,7 +49,7 @@ JOB_CATEGORY_META: List[Dict[str, str]] = [
         "label": "归纳新标题",
         "hint": "生成展示标题：可写多维表格，或直接重命名 TARGET 副本（不改源）",
     },
-    {"id": "ops", "label": "运维纠偏", "hint": "源刷新 / Others 纠偏 / 主题归档 / 附件重试"},
+    {"id": "ops", "label": "运维纠偏", "hint": "源刷新 / Others 纠偏 / 主题归档 / 附件重试 / 提取图片修复"},
 ]
 
 
@@ -343,6 +343,32 @@ JOB_CATALOG: List[JobSpec] = [
         [sys.executable, "-m", "tools.others_theme_classify_move"],
         scope="target",
         danger=True,
+    ),
+    JobSpec(
+        "repair_extracted_images",
+        "修复附件提取图片",
+        "ops",
+        "TARGET：重绑附件提取区图片（复制后裂图）；空图块再用 --reextract",
+        [sys.executable, "-m", "tools.repair_extracted_images", "--scope", "target"],
+        scope="target",
+    ),
+    JobSpec(
+        "repair_extracted_images_dry",
+        "修复附件提取图片 · 试跑 20",
+        "ops",
+        "只列出将处理的 TARGET 文档，不上传",
+        [
+            sys.executable,
+            "-m",
+            "tools.repair_extracted_images",
+            "--scope",
+            "target",
+            "--dry-run",
+            "--limit",
+            "20",
+        ],
+        scope="target",
+        dry_run=True,
     ),
     JobSpec(
         "retry_attachments",

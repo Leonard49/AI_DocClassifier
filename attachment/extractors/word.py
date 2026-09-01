@@ -71,7 +71,7 @@ class WordExtractor(BaseExtractor):
                             if blocks:
                                 self.append_blocks(doc_token, blocks)
                                 blocks = []
-                            self.insert_image(doc_token, root_block_id, blob, ext, len(blob))
+                            self.insert_image(doc_token, root_block_id, blob, ext)
                             imgs_found = True
 
                 if not imgs_found:
