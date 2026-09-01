@@ -9,7 +9,7 @@
 | 文档 | 内容 |
 |------|------|
 | **[快速上手指南](docs/QUICK_START.md)** | **落地操作、控制台、检查清单、排障** |
-| **[控制台使用说明](docs/CONSOLE.md)** | **本地 Web 控制台：安装、页签、三人并行流程** |
+| **[控制台使用说明](docs/CONSOLE.md)** | **本地 Web 控制台：安装、页签、运行任务** |
 | [项目结构](docs/PROJECT_STRUCTURE.md) | 包划分与入口命令 |
 | [分类准则说明](docs/分类准则说明.md) | 产品线判定、Others、元数据 |
 | [系统说明文档](docs/AI_DocClassifier说明文档.md) | 架构、配置、流程、详细排障 |
@@ -72,3 +72,8 @@ python run_console.py
 git checkout feature/arch-data-dir-cleanup
 git pull origin feature/arch-data-dir-cleanup
 ```
+
+## 作者
+
+- 作者：Hydrew
+- 项目负责人：Jamie

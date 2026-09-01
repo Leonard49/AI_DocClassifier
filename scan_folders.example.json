@@ -6,7 +6,7 @@
       "id": "example-smart-faq",
       "name": "示例-Smart FAQ",
       "token": "REPLACE_WITH_NODE_TOKEN",
-      "assignee": "Hydrew",
+      "assignee": "operator",
       "enabled": false,
       "priority": 10,
       "notes": "enabled=false 时不会被 --all-assigned / --all-enabled 选中"

@@ -238,9 +238,9 @@ python main.py --all-assigned
 
 ```
 scan_folders.json
-  ├── folder A  assignee=Hydrew ──┐
-  ├── folder B  assignee=Hydrew ──┼──► 同一 TARGET_PARENT_TOKEN
-  └── folder C  assignee=Alice  ──┘         ▲
+  ├── folder A  assignee=WorkerA ──┐
+  ├── folder B  assignee=WorkerA ──┼──► 同一 TARGET_PARENT_TOKEN
+  └── folder C  assignee=WorkerB ──┘         ▲
                                             │
                               SHARED_STATE_DB（共享去重）
 ```
@@ -270,7 +270,7 @@ scan_folders.json
 **推荐：** 直接 `copy .env.example .env`，模板已按 3～5 人并行预设共享路径与限速参数。
 
 ```env
-WORKER_ID=Hydrew
+WORKER_ID=your-id
 # SCAN_ROOT_TOKEN=   # 清单模式下可留空
 SCAN_FOLDERS_FILE=scan_folders.json
 TARGET_PARENT_TOKEN=GPFewOUJ1iGBrGks7R7cB137nDh

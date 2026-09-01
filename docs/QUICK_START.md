@@ -1,7 +1,7 @@
 # AI DocClassifier — 快速上手指南
 
-> 面向批量落地 · 多人并行 / 一人清单增量操作手册  
-> **当前推荐分支：`feature/arch-data-dir-cleanup`**（控制台 + TARGET 侧工具 + 展示标题/源刷新/贴表纠偏）  
+> 面向落地操作  
+> **当前推荐分支：`feature/arch-data-dir-cleanup`**  
 > 控制台：[CONSOLE.md](CONSOLE.md) · 架构：[ARCHITECTURE.md](ARCHITECTURE.md) · **优化日志**：[BRANCHES.md](BRANCHES.md)
 
 ---
@@ -35,7 +35,7 @@ pip install -r requirements.txt
 | 飞书应用 | **每人独立 App**（`FEISHU_APP_ID` / `FEISHU_APP_SECRET`） |
 | LLM Key | 每人独立或团队分配 |
 | 共享网络盘 | `\\HF-D-006494B\shared_db\` 需有**读写**权限 |
-| 分工 | 推荐用 `scan_folders.json` 的 `assignee`；共用同一 `TARGET_PARENT_TOKEN` |
+| 分工 | `scan_folders.json` 的 `assignee` 对应 `.env` 的 `WORKER_ID`；一人跑全部增量时把各夹 assignee 设成同一 ID |
 
 ---
 
@@ -63,7 +63,7 @@ notepad .env
 编辑 `.env`，填写以下字段：
 
 ```env
-WORKER_ID=你的名字          # 如 Hydrew，须与 scan_folders.json 的 assignee 一致
+WORKER_ID=你的标识          # 须与 scan_folders.json 的 assignee 一致
 FEISHU_APP_ID=cli_xxx       # 你的飞书 App
 FEISHU_APP_SECRET=xxx
 # SCAN_ROOT_TOKEN=          # 清单模式下可留空
@@ -72,7 +72,7 @@ TARGET_PARENT_TOKEN=xxx     # 团队统一的目标目录 token
 LLM_API_KEY=sk-xxx
 ```
 
-仓库已带 `scan_folders.json`（源目录 token + 三人分工示例：Hydrew / Jamie / Hayes）。将 `WORKER_ID` 设为自己的名字即可只跑自己的文件夹。新增源目录：控制台「清单分工」→ 粘贴 wiki token →「添加并保存」。
+仓库已带 `scan_folders.json`（源目录 token + `assignee`）。将 `WORKER_ID` 设成与自己负责夹的 `assignee` 一致即可只跑那些夹；一人承担全部增量时，把各夹 `assignee` 都设成同一个 ID。新增源目录：控制台「清单分工」→ 粘贴 wiki token →「添加并保存」。
 
 其余项已在 `.env.example` 中按 **3～5 人并行** 预设好，一般无需修改。配置也可用控制台「配置」页编辑并保存。
 
@@ -208,9 +208,7 @@ pip install -r requirements.txt   # 依赖有变时执行
 ```powershell
 # 最新一次运行
 type logs\latest.log
-
-# 带 worker 标识的日志（若配置了 SAVE_RUN_LOG）
-type logs\latest_Hydrew.log
+# 若配置了按 worker 分文件：logs\latest_<WORKER_ID>.log
 ```
 
 ### 重试失败的附件提取

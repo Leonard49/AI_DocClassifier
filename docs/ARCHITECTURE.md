@@ -1,6 +1,6 @@
 # 架构说明：Core（主流程）与 Tools（侧工具）
 
-> 对应分支：`feature/arch-data-dir-cleanup` · 更新 2026-08-12  
+> 对应分支：`feature/arch-data-dir-cleanup` · 更新 2026-09-01  
 > **完整优化时间线** → [BRANCHES.md](BRANCHES.md)（迭代优化日志） · 目录树见 [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) · 流程图见 [说明文档 §附录](AI_DocClassifier说明文档.md#附录各阶段逻辑图)
 
 本文回答：
@@ -77,12 +77,12 @@ Core **不**负责：汇总多维表格、对**历史**副本批量回填（那�
 ### 3.3 时间顺序（推荐）
 
 ```text
-① 改清单 assignee / 或 --all-enabled
-② 一人或多人都跑完 Core（所有 SCAN 新增进 TARGET）
-③ 再跑 Tools（元数据表、归纳新标题、回填…）
+① 按清单 assignee 对齐 WORKER_ID（一人跑全部增量时，各夹用同一 assignee）
+② 跑完 Core（新增 SCAN 文档进 TARGET；复制后当场 enrichment）
+③ 需要时再跑 Tools（历史回填、多维表格、纠偏…）
 ```
 
-原因：Tools 默认只看见 TARGET。Core 没跑完时，工具只能处理「已经复制进去的那一部分」。
+Tools 默认只看见 TARGET。Core 没跑完时，工具只能处理「已经复制进去的那一部分」。
 
 ### 3.4 和「共享去重」的关系
 
