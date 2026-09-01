@@ -243,6 +243,7 @@
 
 | 日期 | 优化内容 | 提交 / 关键 |
 |------|----------|-------------|
+| 2026-09-01 | **增量复制后自动归纳新标题**：`enrich_after_copy` 增加 `display_title_rename`（只改 TARGET）；与贴元数据表一起跑。存量仍用 `rename_target_display_titles`。开关 `ENABLE_DISPLAY_TITLE_RENAME`（默认 true） | 待提交 · `enrichment/steps.py` · `main.py` |
 | 2026-08-19 | **附件提取图片可显示**：上传补 `extra.drive_route_token`，PDF/Word 非 JPEG/PNG 先转码；复制后重绑 TARGET 图块。存量用 `python -m tools.repair_extracted_images`（空图块加 `--reextract`） | `5c35684` · `attachment/images.py` · `attachment/extractors/base.py` · `tools/repair_extracted_images.py` |
 | 2026-08-13 | **展示标题/贴表共用 LLM 归纳主题+主型号**：正则 PN 优先，否则 LLM 给模组或产品名，再否则 TARGET 一级\|二级；元数据表补 **文章主题**，作者与标题同一套中英文人名 | 待提交 · `classify/display_llm.py` · `classify/display_title.py` · `classify/doc_metadata.py` |
 | 2026-08-13 | **展示标题作者保留中英文名**；无模组 PN 时中间段用 TARGET 一级\|二级目录，不再写「未知型号」 | 待提交 · `classify/display_title.py` |

@@ -37,7 +37,7 @@ flowchart LR
 | 文档宇宙 | `SCAN_*` / `scan_folders.json` **源** | 默认 **`TARGET_PARENT_TOKEN`**；`--scope scan` 可选扫源 |
 | 本地状态 | `data/core/` | **唯一** `data/tools/tool_ops.db` |
 | 团队共享 | `SHARED_STATE_DB` 等 UNC | 一般不写共享去重库 |
-| 职责 | 扫描 → 附件提取 → 分类 → 复制 → **本次** enrichment 钩子 | 回填、元数据 bitable、**归纳新标题**、Others… |
+| 职责 | 扫描 → 附件提取 → 分类 → 复制 → **本次** enrichment（贴表 / 改 TARGET 标题 / 分隔符 / 重绑图片） | 历史回填、元数据 **bitable**、存量改标题、Others… |
 | 扩展 | 钩子进 `enrichment/`，勿把工具业务塞进 `main.py` | `OP_*` + `ToolJob` + 控制台挂项；禁止再建 `*_index.db` |
 
 ---
@@ -50,11 +50,11 @@ flowchart LR
 2. 可选：附件提取写回**源**文档  
 3. 读正文 → LLM 分类  
 4. `try_claim` → 复制到 TARGET 分类文件夹 → `mark_copied`（共享去重）  
-5. **复制成功后立刻**跑 enrichment 钩子（贴元数据表 / 附件分隔，对象是**目标副本**）  
+5. **复制成功后立刻**跑 enrichment 钩子（对象是**目标副本**）：贴元数据表、按「主题-模组型号-作者」重命名 TARGET 标题（`ENABLE_DISPLAY_TITLE_RENAME`，不改源）、附件分隔、重绑提取区图片  
 6. 可选：给**源**文档打分类标签块  
 7. 结束时再扫一遍 TARGET 做数量校验  
 
-Core **不**负责：汇总多维表格、归纳新标题表、对历史副本批量回填（那些是 Tools）。
+Core **不**负责：汇总多维表格、对**历史**副本批量回填（那些是 Tools）。新复制的文档不再需要再跑一遍归纳新标题 / 贴表工具。
 
 ### 3.2 Tools 做什么
 
@@ -95,11 +95,13 @@ Tools **不会**因为 `shared_copy_state` 里有记录就跳过；只看自己�
 
 ### 3.5 复制后钩子 vs 回填工具
 
-| | enrichment 钩子（在 main 内） | `enrich_copied_docs`（Tools） |
+| | enrichment 钩子（在 main 内） | 回填 Tools |
 |--|--|--|
 | 时机 | 每篇**刚复制成功** | 事后批量 |
-| 对象 | 本次新副本 | TARGET 下（默认）全部/待处理叶子 |
-| 账本 | 可不写 / 或与回填共用 op 语义 | 写入 `tool_ops` |
+| 贴元数据表 | `ENABLE_METADATA_TABLE` | `enrich_copied_docs` |
+| 改 TARGET 标题 | `ENABLE_DISPLAY_TITLE_RENAME` | `rename_target_display_titles` |
+| 多维表格 | **不写** | `export_doc_metadata_bitable` / `export_display_title_bitable` |
+| 账本 | 不写 `tool_ops` | 写入 `tool_ops` |
 | 分类路径 | 来自本次 `tag` | 无 tag → 用 TARGET 面包屑 `target_path` |
 | 作者 / 源路径 | 源节点 + SCAN breadcrumb | 经 `SHARED_STATE_DB` 还原源节点后再取 |
 

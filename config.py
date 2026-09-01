@@ -212,6 +212,8 @@ DISPLAY_TITLE_BITABLE_PER_TOKEN_PARENT = (
 ).strip().lower()
 DISPLAY_TITLE_USE_LLM_PURPOSE = _env_bool("DISPLAY_TITLE_USE_LLM_PURPOSE", True)
 DISPLAY_TITLE_SKIP_EXISTING = _env_bool("DISPLAY_TITLE_SKIP_EXISTING", False)
+# After copy: rename TARGET wiki title to 主题-型号-作者 (never touches SCAN)
+ENABLE_DISPLAY_TITLE_RENAME = _env_bool("ENABLE_DISPLAY_TITLE_RENAME", True)
 # Rename TARGET wiki titles to display-title format (never touches SCAN source)
 DISPLAY_TITLE_RENAME_SKIP_EXISTING = _env_bool(
     "DISPLAY_TITLE_RENAME_SKIP_EXISTING", False

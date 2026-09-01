@@ -104,6 +104,10 @@ class MetadataTableStep:
         ok = self._inserter.insert_from_metadata(
             meta, wiki_node_token=ctx.target_node_token
         )
+        if theme:
+            ctx.extras["theme"] = theme
+        if llm_module:
+            ctx.extras["llm_module"] = llm_module
         if ok:
             return StepResult(
                 self.id,
@@ -155,6 +159,83 @@ class AttachmentSeparatorStep:
         return StepResult(self.id, "failed", msg)
 
 
+class DisplayTitleRenameStep:
+    """Rename the TARGET wiki node to 主题-模组型号-作者. Never touches SCAN."""
+
+    id = "display_title_rename"
+    title = "TARGET 展示标题"
+
+    def __init__(self, tm: TokenManager, *, enabled: bool = True):
+        self.tm = tm
+        self.enabled = enabled
+        self._llm = None
+        self._wiki = None
+
+    def apply(self, ctx: EnrichmentContext) -> StepResult:
+        if not self.enabled:
+            return StepResult(self.id, "skipped", "disabled")
+        if not ctx.target_node_token:
+            return StepResult(self.id, "skipped", "no target_node_token")
+
+        import config as _cfg
+        from classify.display_title import (
+            build_display_title_row,
+            title_has_leading_date_noise,
+            title_looks_like_display_title,
+        )
+        from feishu.wiki_meta import WikiMetaClient
+
+        space_id = (getattr(_cfg, "SPACE_ID", None) or "").strip()
+        if not space_id:
+            return StepResult(self.id, "failed", "SPACE_ID missing")
+
+        current = (ctx.title or "").strip()
+        if title_looks_like_display_title(current) and not title_has_leading_date_noise(
+            current
+        ):
+            return StepResult(self.id, "skipped", "already display title")
+
+        theme = ctx.extras.get("theme")
+        llm_module = (ctx.extras.get("llm_module") or "").strip()
+        if theme is None and getattr(_cfg, "DISPLAY_TITLE_USE_LLM_PURPOSE", True):
+            try:
+                if self._llm is None:
+                    from classify.display_llm import PurposeLLM
+
+                    self._llm = PurposeLLM()
+                guess = self._llm.summarize(
+                    ctx.original_title or current, ctx.content or ""
+                )
+                theme = guess.theme
+                llm_module = llm_module or guess.module
+            except Exception as exc:
+                print(f"⚠️ 展示标题 LLM 失败: {exc}", flush=True)
+
+        row = build_display_title_row(
+            title=current or ctx.original_title or "",
+            content=ctx.content or "",
+            obj_token=ctx.obj_token or "",
+            node_token=ctx.target_node_token,
+            source_path=ctx.source_path or "",
+            theme=theme,
+            author=ctx.author or "",
+            source_title=ctx.original_title or "",
+            target_path=ctx.target_path or "",
+            llm_module=llm_module,
+        )
+        new_title = (row.display_title or "").strip()
+        if not new_title:
+            return StepResult(self.id, "failed", "empty display title")
+        if new_title == current:
+            return StepResult(self.id, "skipped", "same title")
+
+        if self._wiki is None:
+            self._wiki = WikiMetaClient(self.tm)
+        self._wiki.update_title(space_id, ctx.target_node_token, new_title)
+        ctx.title = new_title
+        return StepResult(self.id, "applied", new_title)
+
+
 class ExtractedImagesStep:
     """Re-upload images in the attachment-extract section onto the TARGET copy."""
 
@@ -203,9 +284,11 @@ def default_steps(
     enable_metadata_table: bool = True,
     enable_attachment_separator: bool = True,
     enable_repair_extracted_images: bool = True,
+    enable_display_title_rename: bool = True,
 ) -> list:
     return [
         MetadataTableStep(tm, enabled=enable_metadata_table),
+        DisplayTitleRenameStep(tm, enabled=enable_display_title_rename),
         AttachmentSeparatorStep(tm, enabled=enable_attachment_separator),
         ExtractedImagesStep(tm, enabled=enable_repair_extracted_images),
     ]

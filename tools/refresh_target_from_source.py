@@ -341,9 +341,7 @@ def main() -> int:
 
                 # 5) enrichment on new copy
                 enrich_msg = ""
-                if not args.no_enrich and (
-                    config.ENABLE_METADATA_TABLE or config.ENABLE_ATTACHMENT_SEPARATOR
-                ):
+                if not args.no_enrich:
                     content = ""
                     try:
                         new_info = wiki_meta.get_node(new_copy)
@@ -398,6 +396,7 @@ def main() -> int:
                         source_created_ms=int(ident.get("created_ms") or 0),
                         enable_metadata_table=config.ENABLE_METADATA_TABLE,
                         enable_attachment_separator=config.ENABLE_ATTACHMENT_SEPARATOR,
+                        enable_display_title_rename=config.ENABLE_DISPLAY_TITLE_RENAME,
                     )
                     enrich_msg = format_results(results)
                     print(f"  ✨ enrichment: {enrich_msg}")

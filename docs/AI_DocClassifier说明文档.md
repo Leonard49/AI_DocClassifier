@@ -180,7 +180,7 @@
 3. 目标子目录已有同名文档 → 自动重命名为 `标题 (2)`、`标题 (3)` …
 4. wiki copy API 复制
 5. `mark_copied()` 写入共享库（失败只告警，不中断；本地进度仍保存）
-6. 调用 `enrich_after_copy()`：按开关贴元数据表 / 插入附件分隔符（均幂等）
+6. 调用 `enrich_after_copy()`：按开关贴元数据表 / 归纳新标题重命名 TARGET / 插入附件分隔符 / 重绑提取图片（均幂等）
 7. 可选：在**原文档**打标（`ENABLE_TAG_ADD`）
 8. 每 5 篇保存 `processing_progress.json`
 

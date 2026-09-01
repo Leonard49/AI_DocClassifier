@@ -74,6 +74,7 @@ ENABLE_TAG_ADD = config.ENABLE_TAG_ADD
 ENABLE_METADATA_TABLE = config.ENABLE_METADATA_TABLE
 METADATA_TABLE_FETCH_AUTHOR = config.METADATA_TABLE_FETCH_AUTHOR
 ENABLE_ATTACHMENT_SEPARATOR = config.ENABLE_ATTACHMENT_SEPARATOR
+ENABLE_DISPLAY_TITLE_RENAME = config.ENABLE_DISPLAY_TITLE_RENAME
 ENABLE_ATTACHMENT_EXTRACT = config.ENABLE_ATTACHMENT_EXTRACT
 SAVE_PROGRESS = config.SAVE_PROGRESS
 FORCE_RESCAN = config.FORCE_RESCAN
@@ -522,17 +523,13 @@ def process_single_document(
             else:
                 print("⚠️ 标签块添加失败（复制已成功）")
 
-        if copied_node_token and (
-            ENABLE_METADATA_TABLE or ENABLE_ATTACHMENT_SEPARATOR
-        ):
+        if copied_node_token:
             author = ""
             original_title = doc_title or ""
             source_created_at = ""
             source_created_ms = 0
-            if (
-                ENABLE_METADATA_TABLE
-                and wiki_meta is not None
-            ):
+            need_identity = ENABLE_METADATA_TABLE or ENABLE_DISPLAY_TITLE_RENAME
+            if need_identity and wiki_meta is not None:
                 try:
                     ident = wiki_meta.source_identity(node_token)
                     if ident.get("title"):
@@ -566,6 +563,7 @@ def process_single_document(
                 source_created_ms=source_created_ms,
                 enable_metadata_table=ENABLE_METADATA_TABLE,
                 enable_attachment_separator=ENABLE_ATTACHMENT_SEPARATOR,
+                enable_display_title_rename=ENABLE_DISPLAY_TITLE_RENAME,
             )
             print(f"✨ 文档增强: {format_results(results)}")
             for r in results:
@@ -1010,6 +1008,9 @@ def _run_pipeline(folder: Optional[ScanFolder] = None):
             if ENABLE_METADATA_TABLE
             else ""
         )
+    )
+    print(
+        f"   - 复制后归纳新标题: {'开启' if ENABLE_DISPLAY_TITLE_RENAME else '关闭'}"
     )
     print(
         f"   - 附件提取分隔符: {'开启' if ENABLE_ATTACHMENT_SEPARATOR else '关闭'}"

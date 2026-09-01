@@ -38,6 +38,7 @@ CONFIG_SCHEMA: List[Tuple[str, str, str, str]] = [
     ("FEISHU_LOCAL_MAX_PER_SECOND", "本机飞书 QPS", "parallel", "float"),
     ("ENABLE_ATTACHMENT_EXTRACT", "附件提取", "classify", "bool"),
     ("ENABLE_METADATA_TABLE", "复制后贴元数据表", "classify", "bool"),
+    ("ENABLE_DISPLAY_TITLE_RENAME", "复制后归纳新标题(只改TARGET)", "classify", "bool"),
     ("METADATA_TABLE_COLUMN_WIDTHS", "贴表列宽px(标签,值)", "classify", "str"),
     ("ENABLE_ATTACHMENT_SEPARATOR", "附件提取分隔符", "classify", "bool"),
     ("METADATA_TABLE_FETCH_AUTHOR", "贴表时解析作者", "classify", "bool"),

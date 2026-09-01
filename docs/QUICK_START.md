@@ -100,7 +100,7 @@ python main.py --all-assigned
 2. 提取 PDF/Word/PPT 附件正文写回源文档（已开启）
 3. 并行读取 + AI 分类
 4. 串行复制到目标目录（共享去重，不会重复复制）
-5. 复制成功后跑文档增强管道（`ENABLE_METADATA_TABLE` 贴表；`ENABLE_ATTACHMENT_SEPARATOR` 附件分隔）。旧副本用 `python -m tools.enrich_copied_docs` 回填；路径/作者错误时加 `--force-metadata`
+5. 复制成功后跑文档增强管道：贴元数据表（`ENABLE_METADATA_TABLE`）、归纳新标题并重命名 TARGET（`ENABLE_DISPLAY_TITLE_RENAME`，不改源）、附件分隔、重绑提取图片。旧副本仍用 `python -m tools.enrich_copied_docs` / `rename_target_display_titles` 回填；路径/作者错误时加 `--force-metadata`
 6. 结束时扫描目标目录，输出统计
 
 ### 常用清单命令

@@ -16,6 +16,7 @@ def build_default_pipeline(
     enable_metadata_table: bool = True,
     enable_attachment_separator: bool = True,
     enable_repair_extracted_images: bool = True,
+    enable_display_title_rename: bool = True,
 ) -> EnrichmentPipeline:
     return EnrichmentPipeline(
         default_steps(
@@ -23,6 +24,7 @@ def build_default_pipeline(
             enable_metadata_table=enable_metadata_table,
             enable_attachment_separator=enable_attachment_separator,
             enable_repair_extracted_images=enable_repair_extracted_images,
+            enable_display_title_rename=enable_display_title_rename,
         )
     )
 
@@ -45,6 +47,7 @@ def enrich_after_copy(
     enable_metadata_table: bool = True,
     enable_attachment_separator: bool = True,
     enable_repair_extracted_images: bool = True,
+    enable_display_title_rename: bool = True,
 ) -> List[StepResult]:
     """Run all enabled enrichment steps on a freshly copied document."""
     pipeline = build_default_pipeline(
@@ -52,6 +55,7 @@ def enrich_after_copy(
         enable_metadata_table=enable_metadata_table,
         enable_attachment_separator=enable_attachment_separator,
         enable_repair_extracted_images=enable_repair_extracted_images,
+        enable_display_title_rename=enable_display_title_rename,
     )
     ctx = EnrichmentContext(
         target_node_token=target_node_token,
