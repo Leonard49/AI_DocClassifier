@@ -38,37 +38,58 @@ class PPTExtractor(BaseExtractor):
             if convert_dir and os.path.isdir(convert_dir):
                 shutil.rmtree(convert_dir, ignore_errors=True)
 
+    def _collect_shape_items(self, shapes, shape_type, dx=0, dy=0):
+        items = []
+        for shape in shapes:
+            top = (shape.top or 0) + dy
+            left = (shape.left or 0) + dx
+            try:
+                kind = shape.shape_type
+            except Exception:
+                kind = None
+
+            if kind == shape_type.GROUP:
+                try:
+                    items.extend(
+                        self._collect_shape_items(
+                            shape.shapes, shape_type, left, top
+                        )
+                    )
+                except Exception as exc:
+                    print(f"    跳过组合图形: {exc}")
+                continue
+
+            if kind == shape_type.PICTURE:
+                try:
+                    img = shape.image
+                    items.append(
+                        (
+                            top,
+                            left,
+                            "image",
+                            {
+                                "image_bytes": img.blob,
+                                "image_ext": img.content_type.split("/")[-1],
+                            },
+                        )
+                    )
+                except Exception as exc:
+                    print(f"    跳过无法识别的图片: {exc}")
+                continue
+
+            if shape.has_text_frame:
+                text = shape.text_frame.text.strip()
+                if text:
+                    items.append((top, left, "text", text))
+        return items
+
     def _extract_pptx(
         self, pptx_path: str, doc_token: str, root_block_id: str, presentation_cls, shape_type
     ) -> None:
         prs = presentation_cls(pptx_path)
 
         for slide_num, slide in enumerate(prs.slides, 1):
-            items = []
-            for shape in slide.shapes:
-                top = shape.top if shape.top else 0
-                left = shape.left if shape.left else 0
-
-                if shape.has_text_frame:
-                    text = shape.text_frame.text.strip()
-                    if text:
-                        items.append((top, left, "text", text))
-                elif shape.shape_type == shape_type.PICTURE:
-                    try:
-                        img = shape.image
-                        items.append(
-                            (
-                                top,
-                                left,
-                                "image",
-                                {
-                                    "image_bytes": img.blob,
-                                    "image_ext": img.content_type.split("/")[-1],
-                                },
-                            )
-                        )
-                    except Exception as exc:
-                        print(f"    跳过无法识别的图片: {exc}")
+            items = self._collect_shape_items(slide.shapes, shape_type)
 
             if not items:
                 continue

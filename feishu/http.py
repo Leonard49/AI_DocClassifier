@@ -16,7 +16,7 @@ import config
 logger = logging.getLogger(__name__)
 
 RETRYABLE_HTTP_STATUS = {429, 500, 502, 503, 504}
-RETRYABLE_FEISHU_CODES = {99991400}
+RETRYABLE_FEISHU_CODES = {99991400, 1061045}
 
 
 class RetryableFeishuError(Exception):
@@ -193,7 +193,8 @@ def feishu_request(
     """
     Issue a Feishu API request with optional global rate limit and retries.
 
-    Retries on timeouts, connection errors, HTTP 429/5xx, and Feishu code 99991400.
+    Retries on timeouts, connection errors, HTTP 429/5xx, and Feishu codes
+    99991400 / 1061045.
     """
     timeout = config.FEISHU_API_TIMEOUT if timeout is None else timeout
     max_retries = config.FEISHU_API_MAX_RETRIES if max_retries is None else max_retries

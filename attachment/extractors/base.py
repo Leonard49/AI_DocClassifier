@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from typing import Any, Dict, List, Optional
 
 import config
 from attachment.images import (
     MAX_UPLOAD_BYTES,
+    display_size,
     image_mime,
     normalize_image_bytes,
+    probe_image_size,
 )
 from enrichment.markers import ATTACHMENT_HEADING_PREFIX, ATTACHMENT_SECTION_PREFIX
 from feishu.http import feishu_request
@@ -23,6 +26,9 @@ class BaseExtractor:
 
     def __init__(self, token_manager):
         self.tm = token_manager
+        # Wiki node token for extra.drive_route_token (wiki view 鉴权).
+        self.wiki_node_token = ""
+        self.source_wiki_node_token = ""
 
     @property
     def _token(self) -> str:
@@ -93,6 +99,18 @@ class BaseExtractor:
         except Exception:
             return {}
 
+    def _route_tokens(self, *candidates: str) -> List[str]:
+        seen: List[str] = []
+        for token in (
+            self.wiki_node_token,
+            self.source_wiki_node_token,
+            *candidates,
+        ):
+            text = (token or "").strip()
+            if text and text not in seen:
+                seen.append(text)
+        return seen
+
     def download_media_bytes(
         self, file_token: str, *, doc_token: str = ""
     ) -> Optional[bytes]:
@@ -100,28 +118,34 @@ class BaseExtractor:
             return None
         url = f"https://open.feishu.cn/open-apis/drive/v1/medias/{file_token}/download"
         headers = {"Authorization": f"Bearer {self._token}"}
-        params = None
-        if doc_token:
-            params = {
-                "extra": json.dumps({"drive_route_token": doc_token}, ensure_ascii=False)
-            }
-        resp = feishu_request(
-            "GET",
-            url,
-            headers=headers,
-            params=params,
-            stream=True,
-            timeout=config.FEISHU_DOWNLOAD_TIMEOUT,
-        )
-        if resp.status_code != 200:
-            return None
-        payload = resp.content or b""
-        if not payload:
-            return None
-        ctype = (resp.headers.get("Content-Type") or "").lower()
-        if "json" in ctype or payload[:1] == b"{":
-            return None
-        return payload
+        extras = self._route_tokens(doc_token)
+        extras.append("")
+        for extra_token in extras:
+            params = None
+            if extra_token:
+                params = {
+                    "extra": json.dumps(
+                        {"drive_route_token": extra_token}, ensure_ascii=False
+                    )
+                }
+            resp = feishu_request(
+                "GET",
+                url,
+                headers=headers,
+                params=params,
+                stream=True,
+                timeout=config.FEISHU_DOWNLOAD_TIMEOUT,
+            )
+            if resp.status_code != 200:
+                continue
+            payload = resp.content or b""
+            if not payload:
+                continue
+            ctype = (resp.headers.get("Content-Type") or "").lower()
+            if "json" in ctype or payload[:1] == b"{":
+                continue
+            return payload
+        return None
 
     def _upload_image_to_block(
         self,
@@ -140,35 +164,79 @@ class BaseExtractor:
             print(f"    图片过大 ({len(payload)} bytes)，跳过")
             return False
         mime = image_mime(ext)
-        extra = json.dumps({"drive_route_token": doc_token}, ensure_ascii=False)
-        r = feishu_request(
-            "POST",
-            "https://open.feishu.cn/open-apis/drive/v1/medias/upload_all",
-            headers={"Authorization": f"Bearer {self._token}"},
-            files={"file": (f"img.{ext}", payload, mime)},
-            data={
+        routes: List[str] = []
+        for token in (self.wiki_node_token, doc_token):
+            text = (token or "").strip()
+            if text and text not in routes:
+                routes.append(text)
+        if not routes:
+            routes = [""]
+        ur: Dict[str, Any] = {}
+        last_msg = ""
+        for route in routes:
+            extra = (
+                json.dumps({"drive_route_token": route}, ensure_ascii=False)
+                if route
+                else None
+            )
+            data: Dict[str, Any] = {
                 "file_name": f"img.{ext}",
                 "parent_type": "docx_image",
                 "parent_node": block_id,
                 "size": str(len(payload)),
-                "extra": extra,
-            },
-            timeout=config.FEISHU_DOWNLOAD_TIMEOUT,
-        )
-        ur = self._json(r)
-        if ur.get("code") != 0:
-            print(f"    上传失败: {ur.get('msg', '')[:80]}")
-            return False
+            }
+            if extra:
+                data["extra"] = extra
+            success = False
+            for attempt in range(4):
+                try:
+                    r = feishu_request(
+                        "POST",
+                        "https://open.feishu.cn/open-apis/drive/v1/medias/upload_all",
+                        headers={"Authorization": f"Bearer {self._token}"},
+                        files={"file": (f"img.{ext}", payload, mime)},
+                        data=data,
+                        timeout=config.FEISHU_DOWNLOAD_TIMEOUT,
+                    )
+                except Exception as exc:
+                    last_msg = str(exc)
+                    if attempt < 3:
+                        time.sleep(0.8 * (attempt + 1))
+                        continue
+                    break
+                ur = self._json(r)
+                code = ur.get("code")
+                if code == 0:
+                    success = True
+                    break
+                last_msg = str(ur.get("msg", "") or "")[:80]
+                if code == 1061045 and attempt < 3:
+                    time.sleep(0.8 * (attempt + 1))
+                    continue
+                break
+            if success:
+                break
         file_token = ((ur.get("data") or {}).get("file_token") or "").strip()
         if not file_token:
-            print("    上传失败: 未返回 file_token")
+            print(f"    上传失败: {last_msg or '未返回 file_token'}")
             return False
-        r = feishu_request(
-            "PATCH",
-            f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_token}/blocks/{block_id}",
-            headers=self._headers,
-            json={"replace_image": {"token": file_token}},
-        )
+        width, height = display_size(*probe_image_size(payload, ext))
+        try:
+            r = feishu_request(
+                "PATCH",
+                f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_token}/blocks/{block_id}",
+                headers=self._headers,
+                json={
+                    "replace_image": {
+                        "token": file_token,
+                        "width": width,
+                        "height": height,
+                    }
+                },
+            )
+        except Exception as exc:
+            print(f"    PATCH失败: {exc}")
+            return False
         jr = self._json(r)
         if jr.get("code") == 0:
             if not quiet:
@@ -244,6 +312,26 @@ class BaseExtractor:
             self._delete_child_block(doc_token, root_block_id, bid)
         return ok
 
+    def list_all_blocks(self, doc_token: str) -> List[Dict[str, Any]]:
+        url = f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_token}/blocks"
+        items: List[Dict[str, Any]] = []
+        page_token = ""
+        while True:
+            params: Dict[str, Any] = {"page_size": 500}
+            if page_token:
+                params["page_token"] = page_token
+            resp = feishu_request("GET", url, headers=self._headers, params=params)
+            data = self._json(resp)
+            if data.get("code") != 0:
+                break
+            items.extend((data.get("data") or {}).get("items") or [])
+            if not (data.get("data") or {}).get("has_more"):
+                break
+            page_token = (data.get("data") or {}).get("page_token") or ""
+            if not page_token:
+                break
+        return items
+
     def list_root_children(self, doc_token: str) -> List[Dict[str, Any]]:
         root_id = self.get_root_block_id(doc_token) or doc_token
         url = (
@@ -282,7 +370,11 @@ class BaseExtractor:
         return ""
 
     def attachment_image_blocks(self, doc_token: str) -> List[Dict[str, Any]]:
-        """Image blocks after the attachment-extract banner / first `附件：` heading."""
+        """Image blocks after the attachment-extract banner / first `附件：` heading.
+
+        Includes nested type-27 blocks (callout/quote/table children), not only
+        root-level images, so wiki copies can rebind the whole extract section.
+        """
         children = self.list_root_children(doc_token)
         start = None
         for i, block in enumerate(children):
@@ -294,11 +386,47 @@ class BaseExtractor:
                 break
         if start is None:
             return []
-        return [
-            block
-            for block in children[start:]
-            if int(block.get("block_type") or 0) == IMAGE_BLOCK_TYPE
-        ]
+        allowed_roots = {
+            block.get("block_id") for block in children[start:] if block.get("block_id")
+        }
+        collected: List[Dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        for block in children[start:]:
+            if int(block.get("block_type") or 0) != IMAGE_BLOCK_TYPE:
+                continue
+            bid = block.get("block_id") or ""
+            collected.append(block)
+            if bid:
+                seen_ids.add(bid)
+        all_blocks = self.list_all_blocks(doc_token)
+        by_id = {block.get("block_id"): block for block in all_blocks if block.get("block_id")}
+
+        def _under_extract_section(block: Dict[str, Any]) -> bool:
+            parent_id = block.get("parent_id") or ""
+            walked: set[str] = set()
+            while parent_id:
+                if parent_id in allowed_roots:
+                    return True
+                if parent_id in walked:
+                    return False
+                walked.add(parent_id)
+                parent = by_id.get(parent_id)
+                if not parent:
+                    return False
+                parent_id = parent.get("parent_id") or ""
+            return False
+
+        for block in all_blocks:
+            if int(block.get("block_type") or 0) != IMAGE_BLOCK_TYPE:
+                continue
+            bid = block.get("block_id") or ""
+            if bid in seen_ids:
+                continue
+            if _under_extract_section(block):
+                collected.append(block)
+                if bid:
+                    seen_ids.add(bid)
+        return collected
 
     def rebind_attachment_images(
         self,
@@ -328,10 +456,12 @@ class BaseExtractor:
             token = ((block.get("image") or {}).get("token") or "").strip()
             raw: Optional[bytes] = None
             if token:
-                for extra_doc in (doc_token, source_doc_token, ""):
+                for extra_doc in (doc_token, source_doc_token):
                     raw = self.download_media_bytes(token, doc_token=extra_doc)
                     if raw:
                         break
+                if not raw:
+                    raw = self.download_media_bytes(token)
             if not raw and i < len(source_tokens) and source_tokens[i]:
                 raw = self.download_media_bytes(
                     source_tokens[i], doc_token=source_doc_token
@@ -376,28 +506,12 @@ class BaseExtractor:
     def download_file(
         self, file_token: str, save_path: str, *, doc_token: str = ""
     ) -> None:
-        url = f"https://open.feishu.cn/open-apis/drive/v1/medias/{file_token}/download"
-        headers = {"Authorization": f"Bearer {self._token}"}
-        params = None
-        if doc_token:
-            params = {
-                "extra": json.dumps({"drive_route_token": doc_token}, ensure_ascii=False)
-            }
-        resp = feishu_request(
-            "GET",
-            url,
-            headers=headers,
-            params=params,
-            stream=True,
-            timeout=config.FEISHU_DOWNLOAD_TIMEOUT,
-        )
-        if resp.status_code != 200:
-            raise RuntimeError(f"下载失败 HTTP {resp.status_code}")
+        payload = self.download_media_bytes(file_token, doc_token=doc_token)
+        if not payload:
+            raise RuntimeError("下载失败")
         os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
         with open(save_path, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
+            f.write(payload)
         if os.path.getsize(save_path) == 0:
             raise RuntimeError("文件大小为0")
 

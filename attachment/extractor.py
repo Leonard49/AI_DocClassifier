@@ -268,6 +268,15 @@ class AttachmentExtractor:
         }
         self._root_id_cache: Dict[str, str] = {}
 
+    def _bind_wiki_tokens(
+        self, node_token: str, source_node_token: str = ""
+    ) -> None:
+        wiki = (node_token or "").strip()
+        source = (source_node_token or "").strip()
+        for extractor in self._extractors.values():
+            extractor.wiki_node_token = wiki
+            extractor.source_wiki_node_token = source
+
     @property
     def _token(self) -> str:
         return self.tm.get_token()
@@ -370,6 +379,7 @@ class AttachmentExtractor:
             node_token=node_token,
             source_path=source_path,
         )
+        self._bind_wiki_tokens(node_token)
 
         doc_token = self._get_doc_token(node_token)
         if not doc_token:
@@ -523,6 +533,7 @@ class AttachmentExtractor:
         doc_token = self._get_doc_token(node_token)
         if not doc_token:
             return {"images": 0, "rebound": 0, "empty": 0, "failed": 0, "skipped": 1}
+        self._bind_wiki_tokens(node_token, source_node_token)
         source_doc = ""
         if source_node_token and source_node_token != node_token:
             source_doc = self._get_doc_token(source_node_token) or ""

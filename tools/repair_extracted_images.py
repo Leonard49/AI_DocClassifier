@@ -150,14 +150,15 @@ def main() -> int:
                 else:
                     stats = extractor.repair_images(node, source_node_token=src)
                     n_img = int(stats.get("images") or 0)
+                    empty = int(stats.get("empty") or 0)
                     if n_img:
                         totals["with_images"] += 1
                     totals["rebound"] += int(stats.get("rebound") or 0)
-                    totals["empty"] += int(stats.get("empty") or 0)
+                    totals["empty"] += empty
                     totals["failed"] += int(stats.get("failed") or 0)
                     print(
                         f"  → images={n_img} rebound={stats.get('rebound')} "
-                        f"empty={stats.get('empty')} failed={stats.get('failed')}",
+                        f"empty={empty} failed={stats.get('failed')}",
                         flush=True,
                     )
                     if n_img == 0:
@@ -168,6 +169,24 @@ def main() -> int:
                             status="skipped",
                             detail="no extracted images",
                         )
+                    elif empty > 0:
+                        print(f"  空图块 {empty}，改为从附件重提", flush=True)
+                        result = extractor.reextract_attachments(
+                            node, title=title, source_path=""
+                        )
+                        totals["reextracted"] += 1 if result.status == "extracted" else 0
+                        if result.status in ("failed", "partial"):
+                            totals["failed"] += 1
+                            print(f"  ❌ 重提 {result.status}: {result.error or ''}")
+                        else:
+                            print(f"  → 重提 {result.status}")
+                        ctx.ledger.mark(
+                            doc.get("obj_token") or node,
+                            OP_REPAIR_EXTRACTED_IMAGES,
+                            node_token=node,
+                            status="done" if result.status != "failed" else "failed",
+                            detail=f"reextract:{result.status} empty={empty}",
+                        )
                     else:
                         ctx.ledger.mark(
                             doc.get("obj_token") or node,
@@ -176,7 +195,7 @@ def main() -> int:
                             status="failed" if stats.get("failed") and not stats.get("rebound") else "done",
                             detail=(
                                 f"rebound={stats.get('rebound')} "
-                                f"empty={stats.get('empty')} failed={stats.get('failed')}"
+                                f"empty={empty} failed={stats.get('failed')}"
                             ),
                         )
             except Exception as exc:

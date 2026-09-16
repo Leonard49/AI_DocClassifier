@@ -35,6 +35,45 @@ class WordExtractor(BaseExtractor):
             if convert_dir and os.path.isdir(convert_dir):
                 shutil.rmtree(convert_dir, ignore_errors=True)
 
+    @staticmethod
+    def _image_rel_ids(element, ns_a: str, ns_r: str, ns_v: str) -> list[str]:
+        ids: list[str] = []
+        for blip in element.findall(f".//{{{ns_a}}}blip"):
+            embed = blip.get(f"{{{ns_r}}}embed") or blip.get(f"{{{ns_r}}}link")
+            if embed:
+                ids.append(embed)
+        ns_o = "urn:schemas-microsoft-com:office:office"
+        for imagedata in element.findall(f".//{{{ns_v}}}imagedata"):
+            rid = (
+                imagedata.get(f"{{{ns_r}}}id")
+                or imagedata.get(f"{{{ns_r}}}embed")
+                or imagedata.get(f"{{{ns_o}}}relid")
+            )
+            if rid:
+                ids.append(rid)
+        return ids
+
+    def _insert_images_from(
+        self,
+        element,
+        image_cache: dict,
+        doc_token: str,
+        root_block_id: str,
+        ns_a: str,
+        ns_r: str,
+        ns_v: str,
+    ) -> bool:
+        found = False
+        seen: set[str] = set()
+        for rel_id in self._image_rel_ids(element, ns_a, ns_r, ns_v):
+            if rel_id in seen or rel_id not in image_cache:
+                continue
+            seen.add(rel_id)
+            blob, ext = image_cache[rel_id]
+            self.insert_image(doc_token, root_block_id, blob, ext)
+            found = True
+        return found
+
     def _extract_docx(
         self, docx_path: str, doc_token: str, root_block_id: str, document_cls
     ) -> None:
@@ -42,6 +81,7 @@ class WordExtractor(BaseExtractor):
         ns_w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
         ns_a = "http://schemas.openxmlformats.org/drawingml/2006/main"
         ns_r = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+        ns_v = "urn:schemas-microsoft-com:vml"
 
         image_cache = {}
         for rel_id, rel in doc.part.rels.items():
@@ -61,18 +101,26 @@ class WordExtractor(BaseExtractor):
 
         for child in body:
             if child.tag == f"{{{ns_w}}}p":
-                drawings = child.findall(f".//{{{ns_w}}}drawing")
+                if blocks:
+                    # Flush text before images so reading order stays paragraph → photo.
+                    pending = list(blocks)
+                else:
+                    pending = []
                 imgs_found = False
-                for drawing in drawings:
-                    for blip in drawing.findall(f".//{{{ns_a}}}blip"):
-                        embed = blip.get(f"{{{ns_r}}}embed")
-                        if embed and embed in image_cache:
-                            blob, ext = image_cache[embed]
-                            if blocks:
-                                self.append_blocks(doc_token, blocks)
-                                blocks = []
-                            self.insert_image(doc_token, root_block_id, blob, ext)
-                            imgs_found = True
+                rel_ids = self._image_rel_ids(child, ns_a, ns_r, ns_v)
+                if rel_ids:
+                    if pending:
+                        self.append_blocks(doc_token, pending)
+                        blocks = []
+                    imgs_found = self._insert_images_from(
+                        child,
+                        image_cache,
+                        doc_token,
+                        root_block_id,
+                        ns_a,
+                        ns_r,
+                        ns_v,
+                    )
 
                 if not imgs_found:
                     text = ""
@@ -96,8 +144,17 @@ class WordExtractor(BaseExtractor):
                 if blocks:
                     self.append_blocks(doc_token, blocks)
                     blocks = []
-                for row in child.findall(f".//{{{ns_w}}}tr"):
-                    cells = row.findall(f".//{{{ns_w}}}tc")
+                for row in child.findall(f"./{{{ns_w}}}tr"):
+                    self._insert_images_from(
+                        row,
+                        image_cache,
+                        doc_token,
+                        root_block_id,
+                        ns_a,
+                        ns_r,
+                        ns_v,
+                    )
+                    cells = row.findall(f"./{{{ns_w}}}tc")
                     row_texts = []
                     for cell in cells:
                         paras = cell.findall(f".//{{{ns_w}}}p")
