@@ -243,7 +243,7 @@
 
 | 日期 | 优化内容 | 提交 / 关键 |
 |------|----------|-------------|
-| 2026-09-08 | **附件提取图片加载失败**：上传 `extra` 改用 wiki node token；下载依次试 wiki/docx；嵌套图块也能重绑；Word 表格/VML、PPT 组合图形纳入提取；GIF/WEBP/CMYK/JPX/EMF 转 JPEG/PNG；上传遇 1061045 重试。空图块会自动重提。存量可再跑 `python -m tools.repair_extracted_images` | 待提交 · `attachment/images.py` · `attachment/extractors/base.py` · `attachment/extractors/word.py` · `attachment/extractors/ppt.py` · `tools/repair_extracted_images.py` |
+| 2026-09-08 | **附件提取图片加载失败**：上传 `extra` 改用 wiki node token；下载依次试 wiki/docx；嵌套图块也能重绑；Word 表格/VML、PPT 组合图形纳入提取；GIF/WEBP/CMYK/JPX/EMF 转 JPEG/PNG；上传遇 1061045 重试。空图块会自动重提。存量可再跑 `python -m tools.repair_extracted_images` | `9443234` · `attachment/images.py` · `attachment/extractors/base.py` · `attachment/extractors/word.py` · `attachment/extractors/ppt.py` · `tools/repair_extracted_images.py` |
 | 2026-09-01 | **清单可归同一 assignee 跑全部增量**；复制后 enrichment 含展示标题重命名 | `5e76e57` · `scan_folders.json` · `enrichment/steps.py` |
 | 2026-08-19 | **附件提取图片可显示**：上传补 `extra.drive_route_token`，PDF/Word 非 JPEG/PNG 先转码；复制后重绑 TARGET 图块。存量用 `python -m tools.repair_extracted_images`（空图块加 `--reextract`） | `5c35684` · `attachment/images.py` · `attachment/extractors/base.py` · `tools/repair_extracted_images.py` |
 | 2026-08-13 | **展示标题/贴表共用 LLM 归纳主题+主型号**：正则 PN 优先，否则 LLM 给模组或产品名，再否则 TARGET 一级\|二级；元数据表补 **文章主题**，作者与标题同一套中英文人名 | 待提交 · `classify/display_llm.py` · `classify/display_title.py` · `classify/doc_metadata.py` |
